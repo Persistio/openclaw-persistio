@@ -15,18 +15,15 @@ Persistio automatically extracts facts, preferences, and decisions from conversa
 
 ## Installation
 
-Install directly from GitHub:
-
-```bash
-openclaw plugins install github:Persistio/openclaw-persistio
-```
-
-Or clone and install from a local path:
+Clone the repository and install from the local path:
 
 ```bash
 git clone https://github.com/Persistio/openclaw-persistio.git
-openclaw plugins install ./openclaw-persistio
+cd openclaw-persistio
+openclaw plugins install .
 ```
+
+> **Note:** Installing via `openclaw plugins install github:Persistio/openclaw-persistio` is not currently supported. Use the clone method above.
 
 ---
 
