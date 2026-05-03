@@ -10,7 +10,7 @@
  *   node persistio-hydrate.js --url <baseURL> --key <apiKey> --dir <sessions-dir> [--limit 10]
  *
  * Options:
- *   --url     Persistio base URL (e.g. https://api.persistio.ai)
+ *   --url     Persistio base URL (e.g. https://ca-persistio-prod.gentlesand-1ea7041a.uksouth.azurecontainerapps.io)
  *   --key     Tenant API key
  *   --file    Path to a single JSONL session file
  *   --dir     Path to a directory of JSONL session files (processes oldest first)
