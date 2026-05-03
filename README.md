@@ -15,8 +15,17 @@ Persistio automatically extracts facts, preferences, and decisions from conversa
 
 ## Installation
 
+Install directly from GitHub:
+
 ```bash
-openclaw plugins install openclaw-persistio
+openclaw plugins install github:Persistio/openclaw-persistio
+```
+
+Or clone and install from a local path:
+
+```bash
+git clone https://github.com/Persistio/openclaw-persistio.git
+openclaw plugins install ./openclaw-persistio
 ```
 
 ---
@@ -52,7 +61,7 @@ Add the following to your OpenClaw config (typically `~/.openclaw/openclaw.json`
 
 ## Seeding existing memories
 
-If you have existing OpenClaw session history you'd like to import into Persistio, use the hydration script:
+If you have existing OpenClaw session history you would like to import into Persistio, use the hydration script:
 
 → [`scripts/persistio-hydrate.mjs`](scripts/persistio-hydrate.mjs)
 
