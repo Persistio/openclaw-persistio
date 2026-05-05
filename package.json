@@ -1,10 +1,40 @@
 {
-  "name": "openclaw-persistio",
+  "name": "@persistio/openclaw-plugin",
   "version": "0.1.0",
+  "description": "OpenClaw plugin for Persistio — persistent semantic memory for AI agents",
   "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "license": "MIT",
+  "author": "Chris Coveyduck",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/persistio/openclaw-persistio.git"
+  },
+  "homepage": "https://persistio.ai",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "memory",
+    "ai",
+    "agents",
+    "persistio"
+  ],
   "openclaw": {
-    "extensions": ["./src/index.ts"],
-    "runtimeExtensions": ["./dist/index.js"],
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "runtimeExtensions": [
+      "./dist/index.js"
+    ],
     "compat": {
       "pluginApi": ">=2026.3.24-beta.2",
       "minGatewayVersion": "2026.3.24-beta.2"
@@ -13,12 +43,14 @@
   "scripts": {
     "build": "tsc"
   },
-  "devDependencies": {
-    "typescript": "^5.0.0",
-    "@types/node": "^22.0.0",
+  "dependencies": {
     "@sinclair/typebox": "^0.34.0"
   },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^22.0.0"
+  },
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": ">=2026.3.24-beta.2"
   }
 }

@@ -1,78 +1,57 @@
-# openclaw-persistio
+# @persistio/openclaw-plugin
 
-OpenClaw plugin that adds semantic memory to your agents via [Persistio](https://persistio.ai).
+OpenClaw plugin for [Persistio](https://persistio.ai) — persistent semantic memory for AI agents.
 
-Persistio automatically extracts facts, preferences, and decisions from conversations and recalls the most relevant memories at the start of each session — giving your agents genuine long-term memory.
+Hooks into OpenClaw's `before_prompt_build` and `agent_end` events to automatically recall relevant memories into every prompt and ingest new conversation turns after each run. Exposes `memory_search`, `memory_add`, `memory_delete`, and `memory_list` as agent tools.
 
----
+## Requirements
 
-## Prerequisites
-
-- [OpenClaw](https://openclaw.ai) installed and running
-- A Persistio account at [persistio.ai](https://persistio.ai), or a self-hosted Persistio instance
-
----
+- A running [Persistio](https://github.com/chriscoveyduck/persistio) instance (`api.persistio.ai` or self-hosted)
+- OpenClaw `>=2026.3.24-beta.2`
 
 ## Installation
 
-Clone the repository and install from the local path:
-
 ```bash
-git clone https://github.com/Persistio/openclaw-persistio.git
-cd openclaw-persistio
-openclaw plugins install .
+npm install -g @persistio/openclaw-plugin
 ```
 
-> **Note:** Installing via `openclaw plugins install github:Persistio/openclaw-persistio` is not currently supported. Use the clone method above.
-
----
-
-## Configuration
-
-Add the following to your OpenClaw config (typically `~/.openclaw/openclaw.json`):
+Then register it in your OpenClaw config:
 
 ```json
 {
   "plugins": {
-    "openclaw-persistio": {
-      "baseURL": "https://api.persistio.ai",
-      "apiKey": "your-tenant-api-key",
-      "tokenBudget": 2000,
-      "recallTopK": 10
+    "entries": {
+      "persistio": {
+        "package": "@persistio/openclaw-plugin",
+        "config": {
+          "baseURL": "https://api.persistio.ai",
+          "apiKey": "your-vault-api-key"
+        }
+      }
     }
   }
 }
 ```
 
-### Config reference
+## Configuration
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `baseURL` | ✅ | — | Your Persistio API URL (e.g. `https://api.persistio.ai`) |
-| `apiKey` | ✅ | — | Your tenant API key |
-| `tokenBudget` | | `2000` | Maximum tokens returned by recall |
-| `recallTopK` | | `10` | Number of memories to retrieve per query |
-| `recallTimeout` | | *(unset)* | Recall request timeout in milliseconds |
+| Option | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `baseURL` | string | ✅ | — | Base URL of your Persistio instance |
+| `apiKey` | string | ✅ | — | Vault API key |
+| `tokenBudget` | number | | `2000` | Max tokens to inject into the system prompt |
+| `recallTopK` | number | | `10` | Number of memories to retrieve per recall |
+| `recallTimeout` | number | | `5000` | HTTP timeout for recall requests (ms) |
 
----
+## Tools exposed
 
-## Seeding existing memories
-
-If you have existing OpenClaw session history you would like to import into Persistio, use the hydration script:
-
-→ [`scripts/persistio-hydrate.mjs`](scripts/persistio-hydrate.mjs)
-
-See [scripts/README.md](scripts/README.md) for usage details.
-
----
-
-## Links
-
-- [persistio.ai](https://persistio.ai)
-- [api.persistio.ai](https://api.persistio.ai)
-
----
+| Tool | Description |
+|---|---|
+| `memory_search` | Search memories by semantic query |
+| `memory_add` | Manually store a fact |
+| `memory_delete` | Delete a memory by ID |
+| `memory_list` | List all memories in the vault |
 
 ## License
 
-[BSL 1.1](LICENSE)
+MIT

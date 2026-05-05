@@ -1,5 +1,5 @@
 {
-  "id": "openclaw-persistio",
+  "id": "@persistio/openclaw-plugin",
   "name": "Persistio Memory",
   "description": "Persistent semantic memory for OpenClaw via Persistio",
   "version": "0.1.0",
