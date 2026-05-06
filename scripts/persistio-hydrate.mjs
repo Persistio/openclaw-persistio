@@ -98,7 +98,7 @@ async function parseSessionFile(filePath) {
       chunks.push({
         role: msg.role,
         content: text,
-        timestamp: msg.timestamp ?? msg.message?.timestamp
+        timestamp: (() => { const ts = msg.timestamp ?? msg.message?.timestamp; if (!ts) throw new Error(`Missing timestamp on chunk in session ${sessionId}`); return typeof ts === 'number' ? new Date(ts).toISOString() : ts; })()
       });
     }
   }

@@ -97,15 +97,20 @@ export default definePluginEntry({
     api.on('agent_end', async (event) => {
       try {
         const sessionId = event.runId ?? 'unknown-session';
-        const chunks: Array<{ role: string; content: string }> = [];
+        const chunks: Array<{ role: string; content: string; timestamp: string }> = [];
 
         for (const msg of event.messages) {
           const m = msg as Record<string, unknown>;
           const role = m['role'];
           if (role !== 'user' && role !== 'assistant') continue;
           const text = extractTextFromMessage(msg);
+          const ts = typeof m['timestamp'] === 'number'
+            ? new Date(m['timestamp']).toISOString()
+            : typeof m['timestamp'] === 'string'
+              ? m['timestamp']
+              : new Date().toISOString();
           if (text && text.length > 0) {
-            chunks.push({ role: role as string, content: text });
+            chunks.push({ role: role as string, content: text, timestamp: ts });
           }
         }
 

@@ -24,6 +24,7 @@ export declare class PersistioClient {
     ingest(sessionId: string, chunks: Array<{
         role: string;
         content: string;
+        timestamp: string;
     }>): Promise<void>;
     addMemory(data: string, subject: string): Promise<void>;
     deleteMemory(id: string): Promise<void>;

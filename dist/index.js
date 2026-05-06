@@ -102,8 +102,13 @@ export default definePluginEntry({
                     if (role !== 'user' && role !== 'assistant')
                         continue;
                     const text = extractTextFromMessage(msg);
+                    const ts = typeof m['timestamp'] === 'number'
+                        ? new Date(m['timestamp']).toISOString()
+                        : typeof m['timestamp'] === 'string'
+                            ? m['timestamp']
+                            : new Date().toISOString();
                     if (text && text.length > 0) {
-                        chunks.push({ role: role, content: text });
+                        chunks.push({ role: role, content: text, timestamp: ts });
                     }
                 }
                 if (chunks.length === 0)

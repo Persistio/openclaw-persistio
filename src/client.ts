@@ -47,7 +47,7 @@ export class PersistioClient {
     return data.memories ?? [];
   }
 
-  async ingest(sessionId: string, chunks: Array<{ role: string; content: string }>): Promise<void> {
+  async ingest(sessionId: string, chunks: Array<{ role: string; content: string; timestamp: string }>): Promise<void> {
     if (chunks.length === 0) return;
     const res = await fetch(`${this.baseURL}/v1/ingest`, {
       method: 'POST',
