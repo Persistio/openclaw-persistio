@@ -95,7 +95,11 @@ async function parseSessionFile(filePath) {
     const msg = entry.message;
     const text = extractText(msg);
     if (text) {
-      chunks.push({ role: msg.role, content: text });
+      chunks.push({
+        role: msg.role,
+        content: text,
+        timestamp: msg.timestamp ?? msg.message?.timestamp
+      });
     }
   }
 
