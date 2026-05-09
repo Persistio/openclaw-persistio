@@ -27,6 +27,18 @@ export class PersistioClient {
         const data = await res.json();
         return data.memories ?? [];
     }
+    async recallBundle(query, topK) {
+        const res = await fetch(`${this.baseURL}/v1/recall?format=bundle`, {
+            method: 'POST',
+            headers: this.headers(),
+            body: JSON.stringify({ query, top_k: topK ?? this.recallTopK }),
+            signal: AbortSignal.timeout(this.recallTimeout),
+        });
+        if (!res.ok)
+            throw new Error(`Persistio recallBundle failed: ${res.status}`);
+        const data = await res.json();
+        return data.bundle;
+    }
     async ingest(sessionId, chunks) {
         if (chunks.length === 0)
             return;

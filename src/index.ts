@@ -1,6 +1,6 @@
 import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 import { Type } from '@sinclair/typebox';
-import { PersistioClient, type PersistioConfig } from './client.js';
+import { PersistioClient, type PersistioConfig, type RecallBundle } from './client.js';
 
 function resolveConfig(raw: unknown): PersistioConfig {
   const c = (raw ?? {}) as Record<string, unknown>;
@@ -17,17 +17,116 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function buildMemoryBlock(memories: import('./client.js').PersistioMemory[], budget: number): string {
-  if (memories.length === 0) return '';
-  const lines: string[] = ['## Relevant memories from past conversations'];
-  let used = estimateTokens(lines[0]!);
-  for (const m of memories) {
-    const line = `- ${m.data} [${m.subject}]`;
-    const cost = estimateTokens(line);
-    if (used + cost > budget) break;
-    lines.push(line);
-    used += cost;
+function truncate(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function detectTaskType(text: string): 'troubleshooting' | 'coding' | 'planning' | 'writing' | 'general' {
+  const normalized = text.toLowerCase();
+  if (/(error|bug|fail|failing|issue|broken|debug|debugging|trace|stack)/.test(normalized)) {
+    return 'troubleshooting';
   }
+  if (/(code|coding|typescript|javascript|python|implement|refactor|function|class|api|build|test)/.test(normalized)) {
+    return 'coding';
+  }
+  if (/(plan|planning|roadmap|strategy|steps|milestone|timeline|organize)/.test(normalized)) {
+    return 'planning';
+  }
+  if (/(write|writing|draft|edit|copy|blog|essay|summary|summarize|document)/.test(normalized)) {
+    return 'writing';
+  }
+  return 'general';
+}
+
+function buildRecallQuery(event: { prompt?: string; messages?: unknown[] }): string {
+  const relevantMessages = Array.isArray(event.messages)
+    ? event.messages
+        .map((msg) => {
+          if (typeof msg !== 'object' || msg === null) return null;
+          const m = msg as Record<string, unknown>;
+          const role = m['role'];
+          if (role !== 'user' && role !== 'assistant') return null;
+          const text = extractTextFromMessage(msg);
+          if (!text) return null;
+          return { role, text: text.replace(/\s+/g, ' ').trim() };
+        })
+        .filter((msg): msg is { role: 'user' | 'assistant'; text: string } => msg !== null && msg.text.length > 0)
+    : [];
+
+  const lastUserIndex = (() => {
+    for (let i = relevantMessages.length - 1; i >= 0; i -= 1) {
+      if (relevantMessages[i]!.role === 'user') return i;
+    }
+    return -1;
+  })();
+
+  const lastUserMessage = lastUserIndex >= 0
+    ? relevantMessages[lastUserIndex]!.text
+    : event.prompt?.replace(/\s+/g, ' ').trim() || 'recent context';
+  const primary = truncate(lastUserMessage, 300);
+
+  const contextStart = Math.max(0, lastUserIndex - 6);
+  const contextMessages = lastUserIndex >= 0
+    ? relevantMessages.slice(contextStart, lastUserIndex)
+    : relevantMessages.slice(-6);
+  const contextSummary = truncate(
+    contextMessages
+      .map((msg) => `${msg.role === 'user' ? 'U' : 'A'}:${msg.text}`)
+      .join(' | '),
+    200,
+  );
+
+  const taskType = detectTaskType(`${primary} ${event.prompt ?? ''}`);
+  const parts = [primary];
+  if (contextSummary.length > 0) parts.push(`Context: ${contextSummary}`);
+  parts.push(`[task: ${taskType}]`);
+  return truncate(parts.join('\n'), 600);
+}
+
+function buildMemoryBlock(bundle: RecallBundle, budget: number): string {
+  const sections: Array<{ title: string; items: string[] }> = [
+    { title: 'Behavioural rules', items: bundle.user_rules },
+    { title: 'Preferences', items: bundle.user_preferences },
+    { title: 'Task patterns', items: bundle.task_patterns },
+    { title: 'Workflows', items: bundle.workflows },
+    { title: 'Project', items: bundle.project },
+    { title: 'Constraints', items: bundle.constraints },
+    { title: 'Decisions', items: bundle.decisions },
+    { title: 'System facts', items: bundle.system_facts },
+    { title: 'Domain knowledge', items: bundle.domain_knowledge },
+  ];
+
+  const intro = 'Use the following as prior context and preferences. If they conflict with current instructions, follow the current instructions.';
+  const lines: string[] = [intro];
+  let used = estimateTokens(intro);
+
+  for (const section of sections) {
+    const candidates = section.items.filter((item) => item.trim().length > 0);
+    if (candidates.length === 0) continue;
+
+    const header = `## ${section.title}`;
+    const tentativeLines = [...lines, '', header];
+    let tentativeUsed = used + estimateTokens(`\n\n${header}`);
+    const includedItems: string[] = [];
+
+    for (const item of candidates) {
+      const line = `- ${item}`;
+      const cost = estimateTokens(`\n${line}`);
+      if (tentativeUsed + cost > budget) {
+        return lines.length > 1 ? lines.join('\n') : '';
+      }
+      includedItems.push(line);
+      tentativeUsed += cost;
+    }
+
+    if (includedItems.length > 0) {
+      tentativeLines.push(...includedItems);
+      lines.splice(0, lines.length, ...tentativeLines);
+      used = tentativeUsed;
+    }
+  }
+
   return lines.length > 1 ? lines.join('\n') : '';
 }
 
@@ -77,11 +176,9 @@ export default definePluginEntry({
     // -------------------------------------------------------------------------
     api.on('before_prompt_build', async (event) => {
       try {
-        // Use the current prompt as the recall query
-        const query = event.prompt?.slice(0, 500) || 'recent context';
-        const memories = await client.recall(query);
-        if (memories.length === 0) return;
-        const block = buildMemoryBlock(memories, cfg.tokenBudget);
+        const query = buildRecallQuery(event);
+        const bundle = await client.recallBundle(query);
+        const block = buildMemoryBlock(bundle, cfg.tokenBudget);
         if (!block) return;
         return { appendSystemContext: block };
       } catch (err) {

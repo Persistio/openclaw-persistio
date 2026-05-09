@@ -15,6 +15,22 @@ export interface PersistioMemory {
   confidence: number;
 }
 
+export interface RecallBundle {
+  user_rules: string[];
+  user_preferences: string[];
+  task_patterns: string[];
+  workflows: string[];
+  project: string[];
+  constraints: string[];
+  decisions: string[];
+  system_facts: string[];
+  domain_knowledge: string[];
+}
+
+export interface RecallBundleResponse {
+  bundle: RecallBundle;
+}
+
 export class PersistioClient {
   private readonly baseURL: string;
   private readonly apiKey: string;
@@ -45,6 +61,18 @@ export class PersistioClient {
     if (!res.ok) throw new Error(`Persistio recall failed: ${res.status}`);
     const data = await res.json() as { memories: PersistioMemory[] };
     return data.memories ?? [];
+  }
+
+  async recallBundle(query: string, topK?: number): Promise<RecallBundle> {
+    const res = await fetch(`${this.baseURL}/v1/recall?format=bundle`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({ query, top_k: topK ?? this.recallTopK }),
+      signal: AbortSignal.timeout(this.recallTimeout),
+    });
+    if (!res.ok) throw new Error(`Persistio recallBundle failed: ${res.status}`);
+    const data = await res.json() as RecallBundleResponse;
+    return data.bundle;
   }
 
   async ingest(sessionId: string, chunks: Array<{ role: string; content: string; timestamp: string }>): Promise<void> {

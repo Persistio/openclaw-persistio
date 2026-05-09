@@ -13,6 +13,20 @@ export interface PersistioMemory {
     categories: string[];
     confidence: number;
 }
+export interface RecallBundle {
+    user_rules: string[];
+    user_preferences: string[];
+    task_patterns: string[];
+    workflows: string[];
+    project: string[];
+    constraints: string[];
+    decisions: string[];
+    system_facts: string[];
+    domain_knowledge: string[];
+}
+export interface RecallBundleResponse {
+    bundle: RecallBundle;
+}
 export declare class PersistioClient {
     private readonly baseURL;
     private readonly apiKey;
@@ -21,6 +35,7 @@ export declare class PersistioClient {
     constructor(config: PersistioConfig);
     private headers;
     recall(query: string): Promise<PersistioMemory[]>;
+    recallBundle(query: string, topK?: number): Promise<RecallBundle>;
     ingest(sessionId: string, chunks: Array<{
         role: string;
         content: string;
