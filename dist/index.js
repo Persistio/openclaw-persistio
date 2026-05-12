@@ -1,6 +1,110 @@
 import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 import { Type } from '@sinclair/typebox';
 import { PersistioClient } from './client.js';
+class PersistioMemorySearchManager {
+    client;
+    config;
+    lastProbe = null;
+    lastKnownMemoryCount = 0;
+    constructor(client, config) {
+        this.client = client;
+        this.config = config;
+    }
+    static buildPath(memoryId) {
+        return `persistio/${memoryId}.md`;
+    }
+    static extractMemoryId(relPath) {
+        const normalized = relPath.trim();
+        const match = /^persistio\/(.+)\.md$/u.exec(normalized);
+        return match?.[1] ?? null;
+    }
+    async runProbe() {
+        try {
+            await this.client.recall('status probe', 1);
+            this.lastProbe = { ok: true };
+        }
+        catch (err) {
+            this.lastProbe = { ok: false, error: String(err) };
+        }
+        return this.lastProbe;
+    }
+    async search(query, opts) {
+        const memories = await this.client.recall(query, opts?.maxResults);
+        this.lastKnownMemoryCount = Math.max(this.lastKnownMemoryCount, memories.length);
+        return memories
+            .map((memory, index) => {
+            const rawScore = typeof memory.similarity === 'number'
+                ? memory.similarity
+                : Math.max(0, 1 - (index / Math.max(memories.length, 1)));
+            const score = Math.max(0, rawScore);
+            return {
+                path: PersistioMemorySearchManager.buildPath(memory.id),
+                startLine: 1,
+                endLine: Math.max(1, memory.data.split(/\r?\n/u).length),
+                score,
+                vectorScore: typeof memory.similarity === 'number' ? score : undefined,
+                snippet: truncate(memory.data, 240),
+                source: 'memory',
+                citation: memory.subject,
+            };
+        })
+            .filter((result) => opts?.minScore === undefined || result.score >= opts.minScore);
+    }
+    async readFile(params) {
+        const memoryId = PersistioMemorySearchManager.extractMemoryId(params.relPath);
+        if (!memoryId) {
+            throw new Error(`Unsupported Persistio memory path: ${params.relPath}`);
+        }
+        const memories = await this.client.listMemories();
+        this.lastKnownMemoryCount = Math.max(this.lastKnownMemoryCount, memories.length);
+        const memory = memories.find((entry) => entry.id === memoryId);
+        if (!memory) {
+            throw new Error(`Persistio memory not found: ${memoryId}`);
+        }
+        const allLines = memory.data.split(/\r?\n/u);
+        const from = Math.max(1, params.from ?? 1);
+        const requestedLines = Math.max(1, params.lines ?? allLines.length);
+        const selected = allLines.slice(from - 1, from - 1 + requestedLines);
+        const nextFrom = from - 1 + selected.length < allLines.length ? from + selected.length : undefined;
+        return {
+            text: selected.join('\n'),
+            path: params.relPath,
+            truncated: nextFrom !== undefined,
+            from,
+            lines: selected.length,
+            nextFrom,
+        };
+    }
+    status() {
+        return {
+            backend: 'builtin',
+            provider: 'persistio',
+            model: 'persistio-remote',
+            files: this.lastKnownMemoryCount,
+            chunks: this.lastKnownMemoryCount,
+            dirty: false,
+            sources: ['memory'],
+            vector: {
+                enabled: true,
+                available: this.lastProbe?.ok,
+            },
+            fts: {
+                enabled: false,
+                available: false,
+            },
+            custom: {
+                baseURL: this.config.baseURL,
+                lastProbeError: this.lastProbe?.error,
+            },
+        };
+    }
+    async probeEmbeddingAvailability() {
+        return await this.runProbe();
+    }
+    async probeVectorAvailability() {
+        return (await this.runProbe()).ok;
+    }
+}
 function resolveConfig(raw) {
     const c = (raw ?? {});
     return {
@@ -154,6 +258,19 @@ export default definePluginEntry({
             return;
         }
         const client = new PersistioClient(cfg);
+        api.registerMemoryCapability({
+            runtime: {
+                async getMemorySearchManager() {
+                    return {
+                        manager: new PersistioMemorySearchManager(client, cfg),
+                    };
+                },
+                resolveMemoryBackendConfig() {
+                    return { backend: 'builtin' };
+                },
+                async closeAllMemorySearchManagers() { },
+            },
+        });
         // -------------------------------------------------------------------------
         // before_prompt_build — recall relevant memories and inject into context
         // Event: { prompt: string, messages: unknown[] }

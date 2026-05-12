@@ -34,7 +34,7 @@ export declare class PersistioClient {
     private readonly recallTimeout;
     constructor(config: PersistioConfig);
     private headers;
-    recall(query: string): Promise<PersistioMemory[]>;
+    recall(query: string, topK?: number): Promise<PersistioMemory[]>;
     recallBundle(query: string, topK?: number): Promise<RecallBundle>;
     ingest(sessionId: string, chunks: Array<{
         role: string;
