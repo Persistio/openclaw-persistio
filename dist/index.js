@@ -177,9 +177,11 @@ export default definePluginEntry({
         // Event: { runId?, messages: unknown[], success: boolean, error?, durationMs? }
         // Observation only — no return value.
         // -------------------------------------------------------------------------
-        api.on('agent_end', async (event) => {
+        api.on('agent_end', async (event, context) => {
             try {
-                const sessionId = event.runId ?? 'unknown-session';
+                const sessionId = context?.sessionId ?? event.runId ?? 'unknown-session';
+                if (sessionId.startsWith('announce:'))
+                    return;
                 const chunks = [];
                 for (const msg of event.messages) {
                     const m = msg;
