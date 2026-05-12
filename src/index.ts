@@ -1,6 +1,12 @@
 import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
+import type {
+  MemoryEmbeddingProbeResult,
+  MemoryProviderStatus,
+  MemorySearchManager,
+  MemorySearchResult,
+} from 'openclaw/plugin-sdk/memory-core-host-engine-storage';
 import { Type } from '@sinclair/typebox';
-import { PersistioClient, type PersistioConfig, type RecallBundle } from './client.js';
+import { PersistioClient, type PersistioConfig, type PersistioMemory, type RecallBundle } from './client.js';
 
 function resolveConfig(raw: unknown): PersistioConfig {
   const c = (raw ?? {}) as Record<string, unknown>;
@@ -154,6 +160,161 @@ function extractTextFromMessage(msg: unknown): string | null {
   return parts.length > 0 ? parts.join(' ') : null;
 }
 
+const PERSISTIO_MEMORY_PATH_PREFIX = 'persistio://memory/';
+
+function createClient(config: PersistioConfig, recallTopK = config.recallTopK): PersistioClient {
+  return new PersistioClient({ ...config, recallTopK });
+}
+
+function normalizeMemoryScore(memory: PersistioMemory): number {
+  if (typeof memory.similarity === 'number' && Number.isFinite(memory.similarity)) {
+    return memory.similarity;
+  }
+  if (Number.isFinite(memory.confidence)) {
+    return memory.confidence > 1 ? memory.confidence / 100 : memory.confidence;
+  }
+  return 0;
+}
+
+function buildMemoryPath(id: string): string {
+  return `${PERSISTIO_MEMORY_PATH_PREFIX}${id}`;
+}
+
+function parseMemoryPath(relPath: string): string | null {
+  return relPath.startsWith(PERSISTIO_MEMORY_PATH_PREFIX)
+    ? relPath.slice(PERSISTIO_MEMORY_PATH_PREFIX.length)
+    : null;
+}
+
+function formatMemoryDocument(memory: PersistioMemory): string {
+  const lines = [
+    `Subject: ${memory.subject}`,
+    `Memory ID: ${memory.id}`,
+    `Confidence: ${memory.confidence}`,
+  ];
+
+  if (memory.categories.length > 0) {
+    lines.push(`Categories: ${memory.categories.join(', ')}`);
+  }
+
+  lines.push('', memory.data);
+  return lines.join('\n');
+}
+
+async function probePersistio(client: PersistioClient): Promise<MemoryEmbeddingProbeResult> {
+  try {
+    await client.recall('__openclaw_probe__');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+function createMemorySearchManager(config: PersistioConfig): MemorySearchManager {
+  const client = createClient(config);
+
+  return {
+    async search(
+      query: string,
+      opts?: {
+        maxResults?: number;
+        minScore?: number;
+        sessionKey?: string;
+        qmdSearchModeOverride?: 'query' | 'search' | 'vsearch';
+        onDebug?: (debug: unknown) => void;
+        sources?: Array<'memory' | 'sessions'>;
+      },
+    ) {
+      if (opts?.sources && !opts.sources.includes('memory')) {
+        return [];
+      }
+
+      const recallTopK = typeof opts?.maxResults === 'number' ? opts.maxResults : config.recallTopK;
+      const recallClient = createClient(config, recallTopK);
+      const memories = await recallClient.recall(query);
+
+      return memories
+        .map((memory): MemorySearchResult => {
+          const score = normalizeMemoryScore(memory);
+          return {
+            path: buildMemoryPath(memory.id),
+            startLine: 1,
+            endLine: 1,
+            score,
+            vectorScore: typeof memory.similarity === 'number' ? memory.similarity : undefined,
+            snippet: truncate(memory.data, 400),
+            source: 'memory',
+            citation: memory.subject,
+          };
+        })
+        .filter((result) => opts?.minScore === undefined || result.score >= opts.minScore);
+    },
+
+    async readFile(params: {
+      relPath: string;
+      from?: number;
+      lines?: number;
+    }) {
+      const memoryId = parseMemoryPath(params.relPath);
+      if (!memoryId) {
+        throw new Error(`Unsupported Persistio memory path: ${params.relPath}`);
+      }
+
+      const memories = await client.listMemories();
+      const memory = memories.find((item) => item.id === memoryId);
+      if (!memory) {
+        throw new Error(`Persistio memory not found: ${memoryId}`);
+      }
+
+      const text = formatMemoryDocument(memory);
+      return {
+        path: params.relPath,
+        text,
+        truncated: false,
+        from: params.from ?? 1,
+        lines: params.lines,
+      };
+    },
+
+    status(): MemoryProviderStatus {
+      return {
+        backend: 'builtin',
+        provider: 'persistio',
+        sources: ['memory'],
+        vector: {
+          enabled: true,
+        },
+        custom: {
+          baseURL: config.baseURL,
+        },
+      };
+    },
+
+    async probeEmbeddingAvailability() {
+      return probePersistio(client);
+    },
+
+    async probeVectorAvailability() {
+      const probe = await probePersistio(client);
+      return probe.ok;
+    },
+  };
+}
+
+function createMemoryRuntime(config: PersistioConfig) {
+  return {
+    async getMemorySearchManager() {
+      return {
+        manager: createMemorySearchManager(config),
+      };
+    },
+
+    resolveMemoryBackendConfig() {
+      return { backend: 'builtin' as const };
+    },
+  };
+}
+
 export default definePluginEntry({
   id: 'openclaw-persistio',
   name: 'Persistio Memory',
@@ -167,7 +328,10 @@ export default definePluginEntry({
       return;
     }
 
-    const client = new PersistioClient(cfg);
+    const client = createClient(cfg);
+    api.registerMemoryCapability({
+      runtime: createMemoryRuntime(cfg),
+    });
 
     // -------------------------------------------------------------------------
     // before_prompt_build — recall relevant memories and inject into context
@@ -191,9 +355,10 @@ export default definePluginEntry({
     // Event: { runId?, messages: unknown[], success: boolean, error?, durationMs? }
     // Observation only — no return value.
     // -------------------------------------------------------------------------
-    api.on('agent_end', async (event) => {
+    api.on('agent_end', async (event, context) => {
       try {
-        const sessionId = event.runId ?? 'unknown-session';
+        const sessionId = context?.sessionId ?? event.runId ?? 'unknown-session';
+        if (sessionId.startsWith('announce:')) return;
         const chunks: Array<{ role: string; content: string; timestamp: string }> = [];
 
         for (const msg of event.messages) {
