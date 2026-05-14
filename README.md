@@ -25,7 +25,14 @@ Then register it in your OpenClaw config:
         "package": "@persistio/openclaw-plugin",
         "config": {
           "baseURL": "https://api.persistio.ai",
-          "apiKey": "your-vault-api-key"
+          "apiKey": "your-vault-api-key",
+          "send": {
+            "roles": {
+              "user": "enabled",
+              "agent": "enabled",
+              "tool": "disabled"
+            }
+          }
         }
       }
     }
@@ -42,6 +49,11 @@ Then register it in your OpenClaw config:
 | `tokenBudget` | number | | `2000` | Max tokens to inject into the system prompt |
 | `recallTopK` | number | | `10` | Number of memories to retrieve per recall |
 | `recallTimeout` | number | | `5000` | HTTP timeout for recall requests (ms) |
+| `send.roles.user` | `"enabled"` or `"disabled"` | | `"enabled"` | Send user messages to Persistio ingest |
+| `send.roles.agent` | `"enabled"` or `"disabled"` | | `"enabled"` | Send agent/assistant messages to Persistio ingest |
+| `send.roles.tool` | `"enabled"` or `"disabled"` | | `"disabled"` | Send tool messages to Persistio ingest |
+
+`agent_end` receives a snapshot of the active OpenClaw transcript, so the plugin deduplicates per session and only sends each user, agent, or enabled tool message once per plugin process. Deduplication keys are bounded in memory and expire after 24 hours of session inactivity.
 
 ## Tools exposed
 

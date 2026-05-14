@@ -4,6 +4,15 @@ export interface PersistioConfig {
     tokenBudget: number;
     recallTopK: number;
     recallTimeout: number;
+    send: PersistioSendConfig;
+}
+export type PersistioSendRoleStatus = 'enabled' | 'disabled';
+export interface PersistioSendConfig {
+    roles: {
+        user: PersistioSendRoleStatus;
+        agent: PersistioSendRoleStatus;
+        tool: PersistioSendRoleStatus;
+    };
 }
 export interface PersistioMemory {
     id: string;

@@ -8,6 +8,41 @@ import type {
 import { Type } from '@sinclair/typebox';
 import { PersistioClient, type PersistioConfig, type PersistioMemory, type RecallBundle } from './client.js';
 
+type OpenClawMessageRole = 'user' | 'assistant' | 'tool';
+
+interface SessionMessageKeyStore {
+  keys: Set<string>;
+  lastSeen: number;
+}
+
+const DEFAULT_SEND_ROLES: PersistioConfig['send']['roles'] = {
+  user: 'enabled',
+  agent: 'enabled',
+  tool: 'disabled',
+};
+
+const MESSAGE_KEY_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_TRACKED_SESSIONS = 250;
+const MAX_SENT_KEYS_PER_SESSION = 2000;
+
+function resolveSendConfig(raw: Record<string, unknown>): PersistioConfig['send'] {
+  const send = raw['send'];
+  const roles = typeof send === 'object' && send !== null
+    ? (send as Record<string, unknown>)['roles']
+    : undefined;
+  const rawRoles = typeof roles === 'object' && roles !== null
+    ? roles as Record<string, unknown>
+    : {};
+
+  return {
+    roles: {
+      user: rawRoles['user'] === 'disabled' ? 'disabled' : DEFAULT_SEND_ROLES.user,
+      agent: rawRoles['agent'] === 'disabled' ? 'disabled' : DEFAULT_SEND_ROLES.agent,
+      tool: rawRoles['tool'] === 'enabled' ? 'enabled' : DEFAULT_SEND_ROLES.tool,
+    },
+  };
+}
+
 function resolveConfig(raw: unknown): PersistioConfig {
   const c = (raw ?? {}) as Record<string, unknown>;
   return {
@@ -16,6 +51,7 @@ function resolveConfig(raw: unknown): PersistioConfig {
     tokenBudget: typeof c['tokenBudget'] === 'number' ? c['tokenBudget'] : 2000,
     recallTopK: typeof c['recallTopK'] === 'number' ? c['recallTopK'] : 10,
     recallTimeout: typeof c['recallTimeout'] === 'number' ? c['recallTimeout'] : 5000,
+    send: resolveSendConfig(c),
   };
 }
 
@@ -136,12 +172,22 @@ function buildMemoryBlock(bundle: RecallBundle, budget: number): string {
   return lines.length > 1 ? lines.join('\n') : '';
 }
 
+function normalizeRole(role: unknown): OpenClawMessageRole | null {
+  if (role === 'user' || role === 'assistant' || role === 'tool') return role;
+  return null;
+}
+
+function shouldSendRole(role: OpenClawMessageRole, config: PersistioConfig): boolean {
+  if (role === 'assistant') return config.send.roles.agent === 'enabled';
+  return config.send.roles[role] === 'enabled';
+}
+
 /** Extract plain text from a pi-agent-core message content array */
-function extractTextFromMessage(msg: unknown): string | null {
+function extractTextFromMessage(msg: unknown, allowedRoles: OpenClawMessageRole[] = ['user', 'assistant']): string | null {
   if (typeof msg !== 'object' || msg === null) return null;
   const m = msg as Record<string, unknown>;
-  const role = m['role'];
-  if (role !== 'user' && role !== 'assistant') return null;
+  const role = normalizeRole(m['role']);
+  if (!role || !allowedRoles.includes(role)) return null;
   const content = m['content'];
   if (!Array.isArray(content)) {
     // Some messages have content as a plain string
@@ -158,6 +204,83 @@ function extractTextFromMessage(msg: unknown): string | null {
     }
   }
   return parts.length > 0 ? parts.join(' ') : null;
+}
+
+function resolveMessageTimestamp(msg: Record<string, unknown>): string | null {
+  if (typeof msg['timestamp'] === 'number') return new Date(msg['timestamp']).toISOString();
+  if (typeof msg['timestamp'] === 'string') return msg['timestamp'];
+  return null;
+}
+
+function hashString(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
+}
+
+function buildMessageFingerprint(params: {
+  sessionId: string;
+  msg: Record<string, unknown>;
+  role: OpenClawMessageRole;
+  text: string;
+  index: number;
+}): string {
+  const id = params.msg['id'];
+  if (typeof id === 'string' && id.length > 0) {
+    return `id:${params.sessionId}:${id}`;
+  }
+
+  const idempotencyKey = params.msg['idempotencyKey'];
+  if (typeof idempotencyKey === 'string' && idempotencyKey.length > 0) {
+    return `idempotency:${params.sessionId}:${idempotencyKey}`;
+  }
+
+  const timestamp = resolveMessageTimestamp(params.msg);
+  const basis = timestamp ?? `index:${params.index}`;
+  return `content:${params.sessionId}:${basis}:${params.role}:${hashString(params.text)}`;
+}
+
+function pruneSessionKeyStores(stores: Map<string, SessionMessageKeyStore>, now: number): void {
+  for (const [sessionId, store] of stores) {
+    if (now - store.lastSeen > MESSAGE_KEY_TTL_MS) stores.delete(sessionId);
+  }
+
+  while (stores.size > MAX_TRACKED_SESSIONS) {
+    const oldest = [...stores.entries()].sort((a, b) => a[1].lastSeen - b[1].lastSeen)[0];
+    if (!oldest) return;
+    stores.delete(oldest[0]);
+  }
+}
+
+function getSessionKeyStore(stores: Map<string, SessionMessageKeyStore>, sessionId: string, now: number): Set<string> {
+  pruneSessionKeyStores(stores, now);
+  const existing = stores.get(sessionId);
+  if (existing) {
+    existing.lastSeen = now;
+    return existing.keys;
+  }
+
+  const created: SessionMessageKeyStore = { keys: new Set(), lastSeen: now };
+  stores.set(sessionId, created);
+  return created.keys;
+}
+
+function rememberKeys(target: Set<string>, keys: string[], limit = Number.POSITIVE_INFINITY): void {
+  for (const key of keys) {
+    target.add(key);
+    while (target.size > limit) {
+      const oldest = target.values().next().value as string | undefined;
+      if (!oldest) break;
+      target.delete(oldest);
+    }
+  }
+}
+
+function forgetKeys(target: Set<string>, keys: string[]): void {
+  for (const key of keys) target.delete(key);
 }
 
 const PERSISTIO_MEMORY_PATH_PREFIX = 'persistio://memory/';
@@ -329,6 +452,8 @@ export default definePluginEntry({
     }
 
     const client = createClient(cfg);
+    const sentMessageKeysBySession = new Map<string, SessionMessageKeyStore>();
+    const pendingMessageKeysBySession = new Map<string, SessionMessageKeyStore>();
     api.registerMemoryCapability({
       runtime: createMemoryRuntime(cfg),
     });
@@ -360,27 +485,38 @@ export default definePluginEntry({
         const sessionId = context?.sessionId ?? event.runId ?? 'unknown-session';
         if (sessionId.startsWith('announce:')) return;
         const chunks: Array<{ role: string; content: string; timestamp: string }> = [];
+        const chunkKeys: string[] = [];
+        const now = Date.now();
+        const sentKeys = getSessionKeyStore(sentMessageKeysBySession, sessionId, now);
+        const pendingKeys = getSessionKeyStore(pendingMessageKeysBySession, sessionId, now);
 
-        for (const msg of event.messages) {
+        for (const [index, msg] of event.messages.entries()) {
           const m = msg as Record<string, unknown>;
-          const role = m['role'];
-          if (role !== 'user' && role !== 'assistant') continue;
-          const text = extractTextFromMessage(msg);
-          const ts = typeof m['timestamp'] === 'number'
-            ? new Date(m['timestamp']).toISOString()
-            : typeof m['timestamp'] === 'string'
-              ? m['timestamp']
-              : new Date().toISOString();
-          if (text && text.length > 0) {
-            chunks.push({ role: role as string, content: text, timestamp: ts });
-          }
+          const role = normalizeRole(m['role']);
+          if (!role || !shouldSendRole(role, cfg)) continue;
+          const text = extractTextFromMessage(msg, ['user', 'assistant', 'tool']);
+          if (!text || text.length === 0) continue;
+
+          const key = buildMessageFingerprint({ sessionId, msg: m, role, text, index });
+          if (sentKeys.has(key) || pendingKeys.has(key)) continue;
+
+          const ts = resolveMessageTimestamp(m) ?? new Date().toISOString();
+          chunkKeys.push(key);
+          chunks.push({ role, content: text, timestamp: ts });
         }
 
         if (chunks.length === 0) return;
-        // Fire and forget — agent_end is async but result is ignored
-        client.ingest(sessionId, chunks).catch((err: unknown) => {
-          api.logger?.warn?.(`openclaw-persistio: ingest error: ${String(err)}`);
-        });
+        rememberKeys(pendingKeys, chunkKeys);
+        client.ingest(sessionId, chunks)
+          .then(() => {
+            rememberKeys(sentKeys, chunkKeys, MAX_SENT_KEYS_PER_SESSION);
+          })
+          .catch((err: unknown) => {
+            api.logger?.warn?.(`openclaw-persistio: ingest error: ${String(err)}`);
+          })
+          .finally(() => {
+            forgetKeys(pendingKeys, chunkKeys);
+          });
       } catch (err) {
         api.logger?.warn?.(`openclaw-persistio: agent_end error: ${String(err)}`);
       }
