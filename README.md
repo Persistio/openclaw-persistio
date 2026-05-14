@@ -66,7 +66,7 @@ Then register it in your OpenClaw config:
 
 ## Public X/Twitter Memory Workflow
 
-Install [TweetClaw](https://github.com/Xquik-dev/tweetclaw) ([npm](https://www.npmjs.com/package/@xquik/tweetclaw), [ClawHub](https://clawhub.ai/plugins/@xquik/tweetclaw)) beside Persistio when an OpenClaw workspace needs public X/Twitter source capture:
+Install [TweetClaw](https://github.com/Xquik-dev/tweetclaw) from [npm](https://www.npmjs.com/package/@xquik/tweetclaw) beside Persistio when an OpenClaw workspace needs public X/Twitter source capture. The [ClawHub page](https://clawhub.ai/plugins/@xquik/tweetclaw) is useful for browsing while its listing lags behind the npm release:
 
 ```bash
 openclaw plugins install @xquik/tweetclaw
