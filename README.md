@@ -6,7 +6,7 @@ Hooks into OpenClaw's `before_prompt_build` and `agent_end` events to automatica
 
 ## Requirements
 
-- A running [Persistio](https://github.com/chriscoveyduck/persistio) instance (`api.persistio.ai` or self-hosted)
+- A running [Persistio](https://persistio.ai) instance (`api.persistio.ai` or self-hosted)
 - OpenClaw `>=2026.3.24-beta.2`
 
 ## Installation
@@ -63,6 +63,18 @@ Then register it in your OpenClaw config:
 | `memory_add` | Manually store a fact |
 | `memory_delete` | Delete a memory by ID |
 | `memory_list` | List all memories in the vault |
+
+## Public X/Twitter Memory Workflow
+
+Install [TweetClaw](https://github.com/Xquik-dev/tweetclaw) ([npm](https://www.npmjs.com/package/@xquik/tweetclaw), [ClawHub](https://clawhub.ai/plugins/@xquik/tweetclaw)) beside Persistio when an OpenClaw workspace needs public X/Twitter source capture:
+
+```bash
+openclaw plugins install @xquik/tweetclaw
+```
+
+TweetClaw adds agent tools for scrape tweets, search tweets, search tweet replies, follower export, user lookup, media download, monitor tweets, webhooks, giveaway draws, and approval-gated post tweets or replies through Xquik. Use those results as source material, then store only concise memory records with `memory_add` or normal Persistio transcript capture.
+
+Useful memory fields include the search query, capture date, tweet URLs or IDs, author handles, follower/export counts, a short summary, and the decision or follow-up action. Do not save raw timelines, private account material, direct messages, cookies, API keys, or exported files into long-term memory.
 
 ## License
 
