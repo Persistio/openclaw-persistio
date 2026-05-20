@@ -12,7 +12,7 @@ Hooks into OpenClaw's `before_prompt_build` and `agent_end` events to automatica
 ## Installation
 
 ```bash
-npm install -g @persistio/openclaw-plugin
+openclaw plugins install @persistio/openclaw-plugin
 ```
 
 Then register it in your OpenClaw config:
