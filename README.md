@@ -23,6 +23,9 @@ Then register it in your OpenClaw config:
     "entries": {
       "persistio": {
         "package": "@persistio/openclaw-plugin",
+        "hooks": {
+          "allowConversationAccess": true
+        },
         "config": {
           "baseURL": "https://api.persistio.ai",
           "apiKey": "your-vault-api-key",
