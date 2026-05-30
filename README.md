@@ -12,7 +12,7 @@ Hooks into OpenClaw's `before_prompt_build` and `agent_end` events to automatica
 ## Installation
 
 ```bash
-openclaw plugins install @persistio/openclaw-plugin
+npm install -g @persistio/openclaw-plugin
 ```
 
 Then register it in your OpenClaw config:
@@ -23,12 +23,10 @@ Then register it in your OpenClaw config:
     "entries": {
       "persistio": {
         "package": "@persistio/openclaw-plugin",
-        "hooks": {
-          "allowConversationAccess": true
-        },
         "config": {
           "baseURL": "https://api.persistio.ai",
           "apiKey": "your-vault-api-key",
+          "recallMinSimilarity": 0.3,
           "send": {
             "roles": {
               "user": "enabled",
@@ -51,6 +49,7 @@ Then register it in your OpenClaw config:
 | `apiKey` | string | ✅ | — | Vault API key |
 | `tokenBudget` | number | | `2000` | Max tokens to inject into the system prompt |
 | `recallTopK` | number | | `10` | Number of memories to retrieve per recall |
+| `recallMinSimilarity` | number from `0` to `1` | | Persistio server default | Optional semantic recall quality floor |
 | `recallTimeout` | number | | `5000` | HTTP timeout for recall requests (ms) |
 | `send.roles.user` | `"enabled"` or `"disabled"` | | `"enabled"` | Send user messages to Persistio ingest |
 | `send.roles.agent` | `"enabled"` or `"disabled"` | | `"enabled"` | Send agent/assistant messages to Persistio ingest |

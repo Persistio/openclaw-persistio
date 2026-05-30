@@ -2,11 +2,13 @@ export class PersistioClient {
     baseURL;
     apiKey;
     recallTopK;
+    recallMinSimilarity;
     recallTimeout;
     constructor(config) {
         this.baseURL = config.baseURL.replace(/\/$/, '');
         this.apiKey = config.apiKey;
         this.recallTopK = config.recallTopK;
+        this.recallMinSimilarity = config.recallMinSimilarity;
         this.recallTimeout = config.recallTimeout;
     }
     headers() {
@@ -16,10 +18,14 @@ export class PersistioClient {
         };
     }
     async recall(query) {
+        const body = { query, top_k: this.recallTopK, include_pending: true };
+        if (typeof this.recallMinSimilarity === 'number') {
+            body.min_similarity = this.recallMinSimilarity;
+        }
         const res = await fetch(`${this.baseURL}/v1/recall`, {
             method: 'POST',
             headers: this.headers(),
-            body: JSON.stringify({ query, top_k: this.recallTopK }),
+            body: JSON.stringify(body),
             signal: AbortSignal.timeout(this.recallTimeout),
         });
         if (!res.ok)
@@ -28,16 +34,20 @@ export class PersistioClient {
         return data.memories ?? [];
     }
     async recallBundle(query, topK) {
+        const body = { query, top_k: topK ?? this.recallTopK, include_pending: true };
+        if (typeof this.recallMinSimilarity === 'number') {
+            body.min_similarity = this.recallMinSimilarity;
+        }
         const res = await fetch(`${this.baseURL}/v1/recall?format=bundle`, {
             method: 'POST',
             headers: this.headers(),
-            body: JSON.stringify({ query, top_k: topK ?? this.recallTopK }),
+            body: JSON.stringify(body),
             signal: AbortSignal.timeout(this.recallTimeout),
         });
         if (!res.ok)
             throw new Error(`Persistio recallBundle failed: ${res.status}`);
         const data = await res.json();
-        return data.bundle;
+        return data;
     }
     async ingest(sessionId, chunks) {
         if (chunks.length === 0)
@@ -66,6 +76,17 @@ export class PersistioClient {
         });
         if (!res.ok)
             throw new Error(`Persistio deleteMemory failed: ${res.status}`);
+    }
+    async getMemory(id, options = {}) {
+        const query = options.includePending ? '?include_pending=true' : '';
+        const res = await fetch(`${this.baseURL}/v1/memories/${id}${query}`, {
+            headers: this.headers(),
+        });
+        if (res.status === 404)
+            return null;
+        if (!res.ok)
+            throw new Error(`Persistio getMemory failed: ${res.status}`);
+        return await res.json();
     }
     async listMemories() {
         const res = await fetch(`${this.baseURL}/v1/memories`, {

@@ -2,7 +2,7 @@
   "id": "openclaw-persistio",
   "name": "Persistio Memory",
   "description": "Persistent semantic memory for OpenClaw via Persistio",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "kind": "memory",
   "activation": {
     "onStartup": true
@@ -30,6 +30,11 @@
       },
       "recallTopK": {
         "type": "number"
+      },
+      "recallMinSimilarity": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
       },
       "recallTimeout": {
         "type": "number"

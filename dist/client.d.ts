@@ -3,6 +3,7 @@ export interface PersistioConfig {
     apiKey: string;
     tokenBudget: number;
     recallTopK: number;
+    recallMinSimilarity?: number;
     recallTimeout: number;
     send: PersistioSendConfig;
 }
@@ -22,7 +23,11 @@ export interface PersistioMemory {
     categories: string[];
     confidence: number;
 }
+export interface GetMemoryOptions {
+    includePending?: boolean;
+}
 export interface RecallBundle {
+    global_user_rules?: string[];
     user_rules: string[];
     user_preferences: string[];
     task_patterns: string[];
@@ -35,16 +40,18 @@ export interface RecallBundle {
 }
 export interface RecallBundleResponse {
     bundle: RecallBundle;
+    related_bundle?: RecallBundle;
 }
 export declare class PersistioClient {
     private readonly baseURL;
     private readonly apiKey;
     private readonly recallTopK;
+    private readonly recallMinSimilarity?;
     private readonly recallTimeout;
     constructor(config: PersistioConfig);
     private headers;
     recall(query: string): Promise<PersistioMemory[]>;
-    recallBundle(query: string, topK?: number): Promise<RecallBundle>;
+    recallBundle(query: string, topK?: number): Promise<RecallBundleResponse>;
     ingest(sessionId: string, chunks: Array<{
         role: string;
         content: string;
@@ -52,5 +59,6 @@ export declare class PersistioClient {
     }>): Promise<void>;
     addMemory(data: string, subject: string): Promise<void>;
     deleteMemory(id: string): Promise<void>;
+    getMemory(id: string, options?: GetMemoryOptions): Promise<PersistioMemory | null>;
     listMemories(): Promise<PersistioMemory[]>;
 }

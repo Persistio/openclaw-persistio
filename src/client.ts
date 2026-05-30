@@ -3,6 +3,7 @@ export interface PersistioConfig {
   apiKey: string;
   tokenBudget: number;
   recallTopK: number;
+  recallMinSimilarity?: number;
   recallTimeout: number;
   send: PersistioSendConfig;
 }
@@ -26,7 +27,12 @@ export interface PersistioMemory {
   confidence: number;
 }
 
+export interface GetMemoryOptions {
+  includePending?: boolean;
+}
+
 export interface RecallBundle {
+  global_user_rules?: string[];
   user_rules: string[];
   user_preferences: string[];
   task_patterns: string[];
@@ -40,18 +46,21 @@ export interface RecallBundle {
 
 export interface RecallBundleResponse {
   bundle: RecallBundle;
+  related_bundle?: RecallBundle;
 }
 
 export class PersistioClient {
   private readonly baseURL: string;
   private readonly apiKey: string;
   private readonly recallTopK: number;
+  private readonly recallMinSimilarity?: number;
   private readonly recallTimeout: number;
 
   constructor(config: PersistioConfig) {
     this.baseURL = config.baseURL.replace(/\/$/, '');
     this.apiKey = config.apiKey;
     this.recallTopK = config.recallTopK;
+    this.recallMinSimilarity = config.recallMinSimilarity;
     this.recallTimeout = config.recallTimeout;
   }
 
@@ -63,10 +72,15 @@ export class PersistioClient {
   }
 
   async recall(query: string): Promise<PersistioMemory[]> {
+    const body: Record<string, unknown> = { query, top_k: this.recallTopK, include_pending: true };
+    if (typeof this.recallMinSimilarity === 'number') {
+      body.min_similarity = this.recallMinSimilarity;
+    }
+
     const res = await fetch(`${this.baseURL}/v1/recall`, {
       method: 'POST',
       headers: this.headers(),
-      body: JSON.stringify({ query, top_k: this.recallTopK }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(this.recallTimeout),
     });
     if (!res.ok) throw new Error(`Persistio recall failed: ${res.status}`);
@@ -74,16 +88,21 @@ export class PersistioClient {
     return data.memories ?? [];
   }
 
-  async recallBundle(query: string, topK?: number): Promise<RecallBundle> {
+  async recallBundle(query: string, topK?: number): Promise<RecallBundleResponse> {
+    const body: Record<string, unknown> = { query, top_k: topK ?? this.recallTopK, include_pending: true };
+    if (typeof this.recallMinSimilarity === 'number') {
+      body.min_similarity = this.recallMinSimilarity;
+    }
+
     const res = await fetch(`${this.baseURL}/v1/recall?format=bundle`, {
       method: 'POST',
       headers: this.headers(),
-      body: JSON.stringify({ query, top_k: topK ?? this.recallTopK }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(this.recallTimeout),
     });
     if (!res.ok) throw new Error(`Persistio recallBundle failed: ${res.status}`);
     const data = await res.json() as RecallBundleResponse;
-    return data.bundle;
+    return data;
   }
 
   async ingest(sessionId: string, chunks: Array<{ role: string; content: string; timestamp: string }>): Promise<void> {
@@ -111,6 +130,16 @@ export class PersistioClient {
       headers: this.headers(),
     });
     if (!res.ok) throw new Error(`Persistio deleteMemory failed: ${res.status}`);
+  }
+
+  async getMemory(id: string, options: GetMemoryOptions = {}): Promise<PersistioMemory | null> {
+    const query = options.includePending ? '?include_pending=true' : '';
+    const res = await fetch(`${this.baseURL}/v1/memories/${id}${query}`, {
+      headers: this.headers(),
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Persistio getMemory failed: ${res.status}`);
+    return await res.json() as PersistioMemory;
   }
 
   async listMemories(): Promise<PersistioMemory[]> {

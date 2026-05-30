@@ -43,6 +43,12 @@ function resolveSendConfig(raw: Record<string, unknown>): PersistioConfig['send'
   };
 }
 
+function resolveRecallMinSimilarity(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+    ? value
+    : undefined;
+}
+
 function resolveConfig(raw: unknown): PersistioConfig {
   const c = (raw ?? {}) as Record<string, unknown>;
   return {
@@ -50,6 +56,7 @@ function resolveConfig(raw: unknown): PersistioConfig {
     apiKey: typeof c['apiKey'] === 'string' ? c['apiKey'] : '',
     tokenBudget: typeof c['tokenBudget'] === 'number' ? c['tokenBudget'] : 2000,
     recallTopK: typeof c['recallTopK'] === 'number' ? c['recallTopK'] : 10,
+    recallMinSimilarity: resolveRecallMinSimilarity(c['recallMinSimilarity']),
     recallTimeout: typeof c['recallTimeout'] === 'number' ? c['recallTimeout'] : 5000,
     send: resolveSendConfig(c),
   };
@@ -126,7 +133,7 @@ function buildRecallQuery(event: { prompt?: string; messages?: unknown[] }): str
   return truncate(parts.join('\n'), 600);
 }
 
-function buildMemoryBlock(bundle: RecallBundle, budget: number): string {
+function buildMemoryBlock(bundle: RecallBundle, budget: number, relatedBundle?: RecallBundle): string {
   const sections: Array<{ title: string; items: string[] }> = [
     { title: 'Behavioural rules', items: bundle.user_rules },
     { title: 'Preferences', items: bundle.user_preferences },
@@ -138,6 +145,19 @@ function buildMemoryBlock(bundle: RecallBundle, budget: number): string {
     { title: 'System facts', items: bundle.system_facts },
     { title: 'Domain knowledge', items: bundle.domain_knowledge },
   ];
+  if (relatedBundle) {
+    sections.push(
+      { title: 'Related behavioural rules', items: relatedBundle.user_rules },
+      { title: 'Related preferences', items: relatedBundle.user_preferences },
+      { title: 'Related task patterns', items: relatedBundle.task_patterns },
+      { title: 'Related workflows', items: relatedBundle.workflows },
+      { title: 'Related project', items: relatedBundle.project },
+      { title: 'Related constraints', items: relatedBundle.constraints },
+      { title: 'Related decisions', items: relatedBundle.decisions },
+      { title: 'Related system facts', items: relatedBundle.system_facts },
+      { title: 'Related domain knowledge', items: relatedBundle.domain_knowledge },
+    );
+  }
 
   const intro = 'Use the following as prior context and preferences. If they conflict with current instructions, follow the current instructions.';
   const lines: string[] = [intro];
@@ -383,8 +403,7 @@ function createMemorySearchManager(config: PersistioConfig): MemorySearchManager
         throw new Error(`Unsupported Persistio memory path: ${params.relPath}`);
       }
 
-      const memories = await client.listMemories();
-      const memory = memories.find((item) => item.id === memoryId);
+      const memory = await client.getMemory(memoryId, { includePending: true });
       if (!memory) {
         throw new Error(`Persistio memory not found: ${memoryId}`);
       }
@@ -466,8 +485,8 @@ export default definePluginEntry({
     api.on('before_prompt_build', async (event) => {
       try {
         const query = buildRecallQuery(event);
-        const bundle = await client.recallBundle(query);
-        const block = buildMemoryBlock(bundle, cfg.tokenBudget);
+        const recall = await client.recallBundle(query);
+        const block = buildMemoryBlock(recall.bundle, cfg.tokenBudget, recall.related_bundle);
         if (!block) return;
         return { appendSystemContext: block };
       } catch (err) {
