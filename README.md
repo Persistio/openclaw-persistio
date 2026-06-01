@@ -51,11 +51,22 @@ Then register it in your OpenClaw config:
 | `recallTopK` | number | | `10` | Number of memories to retrieve per recall |
 | `recallMinSimilarity` | number from `0` to `1` | | Persistio server default | Optional semantic recall quality floor |
 | `recallTimeout` | number | | `5000` | HTTP timeout for recall requests (ms) |
+| `ingest.timeoutMs` | number | | `30000` | HTTP timeout for ingest requests (ms). Timed-out requests are treated as ambiguous and not retried automatically |
+| `ingest.maxChunkChars` | number | | `6000` | Maximum characters per chunk sent to Persistio |
+| `ingest.maxChunksPerTurn` | number | | `12` | Maximum chunks sent from a single OpenClaw turn |
+| `ingest.skipSubagentSessions` | boolean | | `true` | Skip `agent:*` sessions unless they are `agent:main:*` |
+| `ingest.user.maxCharsPerMessage` | number | | `24000` | Maximum user-message characters considered for ingest before chunking |
+| `ingest.agent.mode` | `"bounded"` or `"raw"` | | `"bounded"` | Assistant ingest shaping mode. `bounded` collapses obvious large noisy blocks before chunking |
+| `ingest.agent.maxCharsPerMessage` | number | | `24000` | Maximum assistant-message characters considered after filtering |
+| `ingest.agent.maxCharsAfterFiltering` | number | | `9000` | Maximum assistant-message characters retained after deterministic filtering |
+| `ingest.agent.maxCharsPerTurn` | number | | `24000` | Maximum assistant-message characters sent from one turn |
 | `send.roles.user` | `"enabled"` or `"disabled"` | | `"enabled"` | Send user messages to Persistio ingest |
 | `send.roles.agent` | `"enabled"` or `"disabled"` | | `"enabled"` | Send agent/assistant messages to Persistio ingest |
 | `send.roles.tool` | `"enabled"` or `"disabled"` | | `"disabled"` | Send tool messages to Persistio ingest |
 
 `agent_end` receives a snapshot of the active OpenClaw transcript, so the plugin deduplicates per session and only sends each user, agent, or enabled tool message once per plugin process. Deduplication keys are bounded in memory and expire after 24 hours of session inactivity.
+
+Assistant ingest is bounded before any network call. By default the plugin skips non-main `agent:*` sessions, collapses oversized code/log/diff/blob/table-shaped assistant content into omission markers, caps assistant ingest per message and per turn, then chunks all ingest content below `ingest.maxChunkChars`. Persistio still performs server-side extraction and curation; the plugin only enforces a deterministic transport-safe shape.
 
 ## Tools exposed
 

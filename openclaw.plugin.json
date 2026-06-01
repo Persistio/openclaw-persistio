@@ -2,7 +2,7 @@
   "id": "openclaw-persistio",
   "name": "Persistio Memory",
   "description": "Persistent semantic memory for OpenClaw via Persistio",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "kind": "memory",
   "activation": {
     "onStartup": true
@@ -38,6 +38,64 @@
       },
       "recallTimeout": {
         "type": "number"
+      },
+      "ingest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "timeoutMs": {
+            "type": "number"
+          },
+          "maxChunkChars": {
+            "type": "number"
+          },
+          "maxChunksPerTurn": {
+            "type": "number"
+          },
+          "skipSubagentSessions": {
+            "type": "boolean"
+          },
+          "user": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxCharsPerMessage": {
+                "type": "number"
+              }
+            }
+          },
+          "agent": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "bounded",
+                  "raw"
+                ]
+              },
+              "maxCharsPerMessage": {
+                "type": "number"
+              },
+              "maxCharsAfterFiltering": {
+                "type": "number"
+              },
+              "maxCharsPerTurn": {
+                "type": "number"
+              },
+              "largeBlockThresholdChars": {
+                "type": "number"
+              },
+              "largeBlockThresholdLines": {
+                "type": "number"
+              },
+              "maxTableRows": {
+                "type": "number"
+              }
+            }
+          }
+        }
       },
       "send": {
         "type": "object",

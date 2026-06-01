@@ -1,3 +1,4 @@
+import type { PersistioIngestPolicy } from './ingest-policy.js';
 export interface PersistioConfig {
     baseURL: string;
     apiKey: string;
@@ -5,6 +6,7 @@ export interface PersistioConfig {
     recallTopK: number;
     recallMinSimilarity?: number;
     recallTimeout: number;
+    ingest: PersistioIngestPolicy;
     send: PersistioSendConfig;
 }
 export type PersistioSendRoleStatus = 'enabled' | 'disabled';
@@ -48,6 +50,7 @@ export declare class PersistioClient {
     private readonly recallTopK;
     private readonly recallMinSimilarity?;
     private readonly recallTimeout;
+    private readonly ingestTimeout;
     constructor(config: PersistioConfig);
     private headers;
     recall(query: string): Promise<PersistioMemory[]>;

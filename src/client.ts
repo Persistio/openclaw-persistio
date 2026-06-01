@@ -1,3 +1,5 @@
+import type { PersistioIngestPolicy } from './ingest-policy.js';
+
 export interface PersistioConfig {
   baseURL: string;
   apiKey: string;
@@ -5,6 +7,7 @@ export interface PersistioConfig {
   recallTopK: number;
   recallMinSimilarity?: number;
   recallTimeout: number;
+  ingest: PersistioIngestPolicy;
   send: PersistioSendConfig;
 }
 
@@ -55,6 +58,7 @@ export class PersistioClient {
   private readonly recallTopK: number;
   private readonly recallMinSimilarity?: number;
   private readonly recallTimeout: number;
+  private readonly ingestTimeout: number;
 
   constructor(config: PersistioConfig) {
     this.baseURL = config.baseURL.replace(/\/$/, '');
@@ -62,6 +66,7 @@ export class PersistioClient {
     this.recallTopK = config.recallTopK;
     this.recallMinSimilarity = config.recallMinSimilarity;
     this.recallTimeout = config.recallTimeout;
+    this.ingestTimeout = config.ingest.timeoutMs;
   }
 
   private headers(): Record<string, string> {
@@ -111,8 +116,9 @@ export class PersistioClient {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({ session_id: sessionId, chunks }),
+      signal: AbortSignal.timeout(this.ingestTimeout),
     });
-    if (!res.ok) throw new Error(`Persistio ingest failed: ${res.status}`);
+    if (!res.ok) throw new Error(await formatHttpError('ingest', res));
   }
 
   async addMemory(data: string, subject: string): Promise<void> {
@@ -150,4 +156,17 @@ export class PersistioClient {
     const data = await res.json() as { items: PersistioMemory[] };
     return data.items ?? [];
   }
+}
+
+async function formatHttpError(operation: string, res: Response): Promise<string> {
+  let detail = '';
+  try {
+    detail = (await res.text()).trim().slice(0, 500);
+  } catch {
+    // Ignore response body read failures; the status is still actionable.
+  }
+
+  return detail
+    ? `Persistio ${operation} failed: ${res.status} ${detail}`
+    : `Persistio ${operation} failed: ${res.status}`;
 }

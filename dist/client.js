@@ -4,12 +4,14 @@ export class PersistioClient {
     recallTopK;
     recallMinSimilarity;
     recallTimeout;
+    ingestTimeout;
     constructor(config) {
         this.baseURL = config.baseURL.replace(/\/$/, '');
         this.apiKey = config.apiKey;
         this.recallTopK = config.recallTopK;
         this.recallMinSimilarity = config.recallMinSimilarity;
         this.recallTimeout = config.recallTimeout;
+        this.ingestTimeout = config.ingest.timeoutMs;
     }
     headers() {
         return {
@@ -56,9 +58,10 @@ export class PersistioClient {
             method: 'POST',
             headers: this.headers(),
             body: JSON.stringify({ session_id: sessionId, chunks }),
+            signal: AbortSignal.timeout(this.ingestTimeout),
         });
         if (!res.ok)
-            throw new Error(`Persistio ingest failed: ${res.status}`);
+            throw new Error(await formatHttpError('ingest', res));
     }
     async addMemory(data, subject) {
         const res = await fetch(`${this.baseURL}/v1/memories`, {
@@ -97,4 +100,16 @@ export class PersistioClient {
         const data = await res.json();
         return data.items ?? [];
     }
+}
+async function formatHttpError(operation, res) {
+    let detail = '';
+    try {
+        detail = (await res.text()).trim().slice(0, 500);
+    }
+    catch {
+        // Ignore response body read failures; the status is still actionable.
+    }
+    return detail
+        ? `Persistio ${operation} failed: ${res.status} ${detail}`
+        : `Persistio ${operation} failed: ${res.status}`;
 }

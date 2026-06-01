@@ -1,6 +1,7 @@
 import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 import { Type } from '@sinclair/typebox';
 import { PersistioClient } from './client.js';
+import { prepareMessageForIngest, resolveIngestPolicy, shouldIngestSession, } from './ingest-policy.js';
 const DEFAULT_SEND_ROLES = {
     user: 'enabled',
     agent: 'enabled',
@@ -39,6 +40,7 @@ function resolveConfig(raw) {
         recallTopK: typeof c['recallTopK'] === 'number' ? c['recallTopK'] : 10,
         recallMinSimilarity: resolveRecallMinSimilarity(c['recallMinSimilarity']),
         recallTimeout: typeof c['recallTimeout'] === 'number' ? c['recallTimeout'] : 5000,
+        ingest: resolveIngestPolicy(c['ingest']),
         send: resolveSendConfig(c),
     };
 }
@@ -253,6 +255,27 @@ function forgetKeys(target, keys) {
     for (const key of keys)
         target.delete(key);
 }
+function summarizeOmissions(omissions) {
+    if (omissions.length === 0)
+        return 'none';
+    const counts = new Map();
+    for (const omission of omissions) {
+        counts.set(omission.label, (counts.get(omission.label) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+        .map(([label, count]) => `${label}:${count}`)
+        .join(',');
+}
+function isTimeoutLikeError(err) {
+    if (typeof err !== 'object' || err === null)
+        return false;
+    const record = err;
+    const name = typeof record['name'] === 'string' ? record['name'] : '';
+    if (name === 'TimeoutError' || name === 'AbortError')
+        return true;
+    const message = typeof record['message'] === 'string' ? record['message'].toLowerCase() : '';
+    return message.includes('timeout') || message.includes('aborted');
+}
 const PERSISTIO_MEMORY_PATH_PREFIX = 'persistio://memory/';
 function createClient(config, recallTopK = config.recallTopK) {
     return new PersistioClient({ ...config, recallTopK });
@@ -417,8 +440,18 @@ export default definePluginEntry({
                 const sessionId = context?.sessionId ?? event.runId ?? 'unknown-session';
                 if (sessionId.startsWith('announce:'))
                     return;
+                if (!shouldIngestSession(sessionId, cfg.ingest)) {
+                    api.logger?.debug?.(`openclaw-persistio: ingest skipped non-main session: ${sessionId}`);
+                    return;
+                }
                 const chunks = [];
                 const chunkKeys = [];
+                let agentCharsSent = 0;
+                let originalChars = 0;
+                let preparedChars = 0;
+                let truncatedMessages = 0;
+                let skippedMessages = 0;
+                const omissions = [];
                 const now = Date.now();
                 const sentKeys = getSessionKeyStore(sentMessageKeysBySession, sessionId, now);
                 const pendingKeys = getSessionKeyStore(pendingMessageKeysBySession, sessionId, now);
@@ -434,17 +467,50 @@ export default definePluginEntry({
                     if (sentKeys.has(key) || pendingKeys.has(key))
                         continue;
                     const ts = resolveMessageTimestamp(m) ?? new Date().toISOString();
+                    const prepared = prepareMessageForIngest({
+                        role,
+                        text,
+                        policy: cfg.ingest,
+                        remainingAgentChars: Math.max(0, cfg.ingest.agent.maxCharsPerTurn - agentCharsSent),
+                        remainingChunks: Math.max(0, cfg.ingest.maxChunksPerTurn - chunks.length),
+                    });
+                    originalChars += prepared.originalChars;
+                    preparedChars += prepared.preparedChars;
+                    omissions.push(...prepared.omissions);
+                    if (prepared.truncated)
+                        truncatedMessages += 1;
+                    if (prepared.chunks.length === 0) {
+                        skippedMessages += 1;
+                        continue;
+                    }
                     chunkKeys.push(key);
-                    chunks.push({ role, content: text, timestamp: ts });
+                    if (role === 'assistant') {
+                        agentCharsSent += prepared.preparedChars;
+                    }
+                    chunks.push(...prepared.chunks.map((content) => ({ role, content, timestamp: ts })));
+                    if (chunks.length >= cfg.ingest.maxChunksPerTurn)
+                        break;
                 }
                 if (chunks.length === 0)
                     return;
+                if (truncatedMessages > 0 || omissions.length > 0 || skippedMessages > 0) {
+                    api.logger?.info?.(`openclaw-persistio: ingest planned session=${sessionId} chunks=${chunks.length} `
+                        + `originalChars=${originalChars} preparedChars=${preparedChars} `
+                        + `truncatedMessages=${truncatedMessages} skippedMessages=${skippedMessages} `
+                        + `omissions=${summarizeOmissions(omissions)}`);
+                }
                 rememberKeys(pendingKeys, chunkKeys);
                 client.ingest(sessionId, chunks)
                     .then(() => {
                     rememberKeys(sentKeys, chunkKeys, MAX_SENT_KEYS_PER_SESSION);
                 })
                     .catch((err) => {
+                    if (isTimeoutLikeError(err)) {
+                        rememberKeys(sentKeys, chunkKeys, MAX_SENT_KEYS_PER_SESSION);
+                        api.logger?.warn?.(`openclaw-persistio: ingest timeout after ${cfg.ingest.timeoutMs}ms; `
+                            + `outcome is ambiguous, suppressing retry for ${chunkKeys.length} messages in session=${sessionId}`);
+                        return;
+                    }
                     api.logger?.warn?.(`openclaw-persistio: ingest error: ${String(err)}`);
                 })
                     .finally(() => {
