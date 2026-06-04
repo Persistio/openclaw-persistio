@@ -6,6 +6,8 @@ export interface PersistioConfig {
     recallTopK: number;
     recallMinSimilarity?: number;
     recallTimeout: number;
+    recallIncludePending: boolean;
+    includeRelatedMemories: boolean;
     ingest: PersistioIngestPolicy;
     send: PersistioSendConfig;
 }
@@ -44,6 +46,9 @@ export interface RecallBundleResponse {
     bundle: RecallBundle;
     related_bundle?: RecallBundle;
 }
+export interface RecallBundleOptions {
+    includeRelated?: boolean;
+}
 export declare class PersistioTimeoutError extends Error {
     constructor(operation: string, timeoutMs: number);
 }
@@ -53,12 +58,14 @@ export declare class PersistioClient {
     private readonly recallTopK;
     private readonly recallMinSimilarity?;
     private readonly recallTimeout;
+    private readonly recallIncludePending;
+    private readonly includeRelatedMemories;
     private readonly ingestTimeout;
     private readonly writeTimeout;
     constructor(config: PersistioConfig);
     private headers;
     recall(query: string): Promise<PersistioMemory[]>;
-    recallBundle(query: string, topK?: number): Promise<RecallBundleResponse>;
+    recallBundle(query: string, topK?: number, options?: RecallBundleOptions): Promise<RecallBundleResponse>;
     ingest(sessionId: string, chunks: Array<{
         role: string;
         content: string;

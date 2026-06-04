@@ -10,6 +10,8 @@ export class PersistioClient {
     recallTopK;
     recallMinSimilarity;
     recallTimeout;
+    recallIncludePending;
+    includeRelatedMemories;
     ingestTimeout;
     writeTimeout;
     constructor(config) {
@@ -18,6 +20,8 @@ export class PersistioClient {
         this.recallTopK = config.recallTopK;
         this.recallMinSimilarity = config.recallMinSimilarity;
         this.recallTimeout = config.recallTimeout;
+        this.recallIncludePending = config.recallIncludePending;
+        this.includeRelatedMemories = config.includeRelatedMemories;
         this.ingestTimeout = config.ingest.timeoutMs;
         this.writeTimeout = config.ingest.timeoutMs;
     }
@@ -29,7 +33,11 @@ export class PersistioClient {
     }
     async recall(query) {
         return withRequestDeadline('recall', this.recallTimeout, async (signal) => {
-            const body = { query, top_k: this.recallTopK, include_pending: true };
+            const body = {
+                query,
+                top_k: this.recallTopK,
+                include_pending: this.recallIncludePending
+            };
             if (typeof this.recallMinSimilarity === 'number') {
                 body.min_similarity = this.recallMinSimilarity;
             }
@@ -45,9 +53,14 @@ export class PersistioClient {
             return data.memories ?? [];
         });
     }
-    async recallBundle(query, topK) {
+    async recallBundle(query, topK, options = {}) {
         return withRequestDeadline('recallBundle', this.recallTimeout, async (signal) => {
-            const body = { query, top_k: topK ?? this.recallTopK, include_pending: true };
+            const body = {
+                query,
+                top_k: topK ?? this.recallTopK,
+                include_pending: this.recallIncludePending,
+                include_related: options.includeRelated ?? this.includeRelatedMemories
+            };
             if (typeof this.recallMinSimilarity === 'number') {
                 body.min_similarity = this.recallMinSimilarity;
             }

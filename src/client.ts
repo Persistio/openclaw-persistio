@@ -7,6 +7,8 @@ export interface PersistioConfig {
   recallTopK: number;
   recallMinSimilarity?: number;
   recallTimeout: number;
+  recallIncludePending: boolean;
+  includeRelatedMemories: boolean;
   ingest: PersistioIngestPolicy;
   send: PersistioSendConfig;
 }
@@ -52,6 +54,10 @@ export interface RecallBundleResponse {
   related_bundle?: RecallBundle;
 }
 
+export interface RecallBundleOptions {
+  includeRelated?: boolean;
+}
+
 export class PersistioTimeoutError extends Error {
   constructor(operation: string, timeoutMs: number) {
     super(`Persistio ${operation} timed out after ${timeoutMs}ms`);
@@ -65,6 +71,8 @@ export class PersistioClient {
   private readonly recallTopK: number;
   private readonly recallMinSimilarity?: number;
   private readonly recallTimeout: number;
+  private readonly recallIncludePending: boolean;
+  private readonly includeRelatedMemories: boolean;
   private readonly ingestTimeout: number;
   private readonly writeTimeout: number;
 
@@ -74,6 +82,8 @@ export class PersistioClient {
     this.recallTopK = config.recallTopK;
     this.recallMinSimilarity = config.recallMinSimilarity;
     this.recallTimeout = config.recallTimeout;
+    this.recallIncludePending = config.recallIncludePending;
+    this.includeRelatedMemories = config.includeRelatedMemories;
     this.ingestTimeout = config.ingest.timeoutMs;
     this.writeTimeout = config.ingest.timeoutMs;
   }
@@ -87,7 +97,11 @@ export class PersistioClient {
 
   async recall(query: string): Promise<PersistioMemory[]> {
     return withRequestDeadline('recall', this.recallTimeout, async (signal) => {
-      const body: Record<string, unknown> = { query, top_k: this.recallTopK, include_pending: true };
+      const body: Record<string, unknown> = {
+        query,
+        top_k: this.recallTopK,
+        include_pending: this.recallIncludePending
+      };
       if (typeof this.recallMinSimilarity === 'number') {
         body.min_similarity = this.recallMinSimilarity;
       }
@@ -104,9 +118,14 @@ export class PersistioClient {
     });
   }
 
-  async recallBundle(query: string, topK?: number): Promise<RecallBundleResponse> {
+  async recallBundle(query: string, topK?: number, options: RecallBundleOptions = {}): Promise<RecallBundleResponse> {
     return withRequestDeadline('recallBundle', this.recallTimeout, async (signal) => {
-      const body: Record<string, unknown> = { query, top_k: topK ?? this.recallTopK, include_pending: true };
+      const body: Record<string, unknown> = {
+        query,
+        top_k: topK ?? this.recallTopK,
+        include_pending: this.recallIncludePending,
+        include_related: options.includeRelated ?? this.includeRelatedMemories
+      };
       if (typeof this.recallMinSimilarity === 'number') {
         body.min_similarity = this.recallMinSimilarity;
       }

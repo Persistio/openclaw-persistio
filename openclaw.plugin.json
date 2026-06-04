@@ -2,7 +2,7 @@
   "id": "openclaw-persistio",
   "name": "Persistio Memory",
   "description": "Persistent semantic memory for OpenClaw via Persistio",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "kind": "memory",
   "activation": {
     "onStartup": true
@@ -10,16 +10,20 @@
   "contracts": {
     "tools": [
       "memory_search",
-      "memory_add",
-      "memory_delete",
-      "memory_list"
+      "memory_get",
+      "persistio_memory_add",
+      "persistio_memory_delete",
+      "persistio_memory_list"
     ]
   },
   "toolMetadata": {
-    "memory_delete": {
+    "persistio_memory_add": {
       "optional": true
     },
-    "memory_list": {
+    "persistio_memory_delete": {
+      "optional": true
+    },
+    "persistio_memory_list": {
       "optional": true
     }
   },
@@ -49,6 +53,12 @@
       "recallTimeout": {
         "type": "number",
         "minimum": 1
+      },
+      "recallIncludePending": {
+        "type": "boolean"
+      },
+      "includeRelatedMemories": {
+        "type": "boolean"
       },
       "ingest": {
         "type": "object",

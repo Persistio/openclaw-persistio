@@ -32,6 +32,12 @@ const MAX_SENT_KEYS_PER_SESSION = 2000;
 const RECALL_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3;
 const RECALL_CIRCUIT_BREAKER_COOLDOWN_MS = 60_000;
 const RECALL_GUARD_MARGIN_MS = 250;
+const DEFAULT_TOKEN_BUDGET = 400;
+const DEFAULT_RECALL_TOP_K = 4;
+const DEFAULT_RECALL_TIMEOUT_MS = 1500;
+const MAX_MEMORY_SEARCH_RESULTS = 8;
+const MAX_PROMPT_MEMORY_ITEM_CHARS = 500;
+const MAX_MEMORY_SNIPPET_CHARS = 360;
 
 interface PluginLogger {
   debug?: (message: string) => void;
@@ -95,15 +101,31 @@ function resolvePositiveInteger(value: unknown, fallback: number): number {
     : fallback;
 }
 
+function resolveBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function resolveOptionalPositiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 1
+    ? Math.floor(value)
+    : undefined;
+}
+
+function clampPositiveInteger(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
 function resolveConfig(raw: unknown): PersistioConfig {
   const c = (raw ?? {}) as Record<string, unknown>;
   return {
     baseURL: typeof c['baseURL'] === 'string' ? c['baseURL'] : '',
     apiKey: typeof c['apiKey'] === 'string' ? c['apiKey'] : '',
-    tokenBudget: resolvePositiveInteger(c['tokenBudget'], 2000),
-    recallTopK: resolvePositiveInteger(c['recallTopK'], 10),
+    tokenBudget: resolvePositiveInteger(c['tokenBudget'], DEFAULT_TOKEN_BUDGET),
+    recallTopK: resolvePositiveInteger(c['recallTopK'], DEFAULT_RECALL_TOP_K),
     recallMinSimilarity: resolveRecallMinSimilarity(c['recallMinSimilarity']),
-    recallTimeout: resolvePositiveInteger(c['recallTimeout'], 5000),
+    recallTimeout: resolvePositiveInteger(c['recallTimeout'], DEFAULT_RECALL_TIMEOUT_MS),
+    recallIncludePending: resolveBoolean(c['recallIncludePending'], false),
+    includeRelatedMemories: resolveBoolean(c['includeRelatedMemories'], false),
     ingest: resolveIngestPolicy(c['ingest']),
     send: resolveSendConfig(c),
   };
@@ -190,7 +212,7 @@ function buildMemoryBlock(bundle: RecallBundle | undefined, budget: number, rela
   if (!bundle || typeof bundle !== 'object') return '';
 
   const sections: Array<{ title: string; items: string[] }> = [
-    { title: 'Behavioural rules', items: toStringArray(bundle.user_rules) },
+    { title: 'Behavioural rules', items: [...toStringArray(bundle.global_user_rules), ...toStringArray(bundle.user_rules)] },
     { title: 'Preferences', items: toStringArray(bundle.user_preferences) },
     { title: 'Task patterns', items: toStringArray(bundle.task_patterns) },
     { title: 'Workflows', items: toStringArray(bundle.workflows) },
@@ -228,10 +250,10 @@ function buildMemoryBlock(bundle: RecallBundle | undefined, budget: number, rela
     const includedItems: string[] = [];
 
     for (const item of candidates) {
-      const line = `- ${item}`;
+      const line = `- ${truncate(item.replace(/\s+/g, ' ').trim(), MAX_PROMPT_MEMORY_ITEM_CHARS)}`;
       const cost = estimateTokens(`\n${line}`);
       if (tentativeUsed + cost > budget) {
-        return lines.length > 1 ? lines.join('\n') : '';
+        break;
       }
       includedItems.push(line);
       tentativeUsed += cost;
@@ -436,6 +458,30 @@ async function withPluginDeadline<T>(
 
 const PERSISTIO_MEMORY_PATH_PREFIX = 'persistio://memory/';
 
+function jsonResult(payload: unknown) {
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+    details: payload,
+  };
+}
+
+function buildMemorySearchUnavailableResult(error: string) {
+  return {
+    results: [],
+    disabled: true,
+    unavailable: true,
+    error,
+    warning: 'Persistio memory retrieval is currently unavailable.',
+    action: 'Continue without memory for this turn.',
+    debug: { backend: 'builtin', provider: 'persistio' },
+  };
+}
+
+function resolveMemorySearchLimit(params: { maxResults?: number; fallback: number }): number {
+  const requested = resolveOptionalPositiveInteger(params.maxResults) ?? params.fallback;
+  return clampPositiveInteger(requested, 1, MAX_MEMORY_SEARCH_RESULTS);
+}
+
 function createClient(config: PersistioConfig, recallTopK = config.recallTopK): PersistioClient {
   return new PersistioClient({ ...config, recallTopK });
 }
@@ -507,7 +553,7 @@ function createMemorySearchManager(
         return [];
       }
 
-      const recallTopK = typeof opts?.maxResults === 'number' ? opts.maxResults : config.recallTopK;
+      const recallTopK = resolveMemorySearchLimit({ maxResults: opts?.maxResults, fallback: config.recallTopK });
       const recallClient = createClient(config, recallTopK);
       const memories = await runGuardedRecall({
         operation: 'memory search recall',
@@ -527,7 +573,7 @@ function createMemorySearchManager(
             endLine: 1,
             score,
             vectorScore: typeof memory.similarity === 'number' ? memory.similarity : undefined,
-            snippet: truncate(memory.data, 400),
+            snippet: truncate(memory.data.replace(/\s+/g, ' ').trim(), MAX_MEMORY_SNIPPET_CHARS),
             source: 'memory',
             citation: memory.subject,
           };
@@ -551,12 +597,17 @@ function createMemorySearchManager(
       }
 
       const text = formatMemoryDocument(memory);
+      const from = params.from ?? 1;
+      const lines = text.split('\n');
+      const startIndex = Math.max(0, from - 1);
+      const requestedLines = params.lines && params.lines > 0 ? params.lines : 40;
+      const sliced = lines.slice(startIndex, startIndex + requestedLines).join('\n');
       return {
         path: params.relPath,
-        text,
-        truncated: false,
-        from: params.from ?? 1,
-        lines: params.lines,
+        text: truncate(sliced, 2000),
+        truncated: startIndex + requestedLines < lines.length || sliced.length > 2000,
+        from,
+        lines: requestedLines,
       };
     },
 
@@ -599,6 +650,26 @@ function createMemoryRuntime(config: PersistioConfig, recallBreaker: RecallCircu
   };
 }
 
+function buildPersistioMemoryPromptSection({ availableTools }: { availableTools: Set<string> }): string[] {
+  const hasMemorySearch = availableTools.has('memory_search');
+  const hasMemoryGet = availableTools.has('memory_get');
+  if (!hasMemorySearch && !hasMemoryGet) return [];
+
+  if (hasMemorySearch && hasMemoryGet) {
+    return [
+      '## Memory Recall',
+      'Persistio is the active memory provider. For prior work, decisions, dates, people, preferences, or todos, use memory_search first and memory_get only for a bounded exact read of a returned persistio://memory/<id> path.',
+      '',
+    ];
+  }
+
+  return [
+    '## Memory Recall',
+    'Persistio is the active memory provider. Use the available memory tool for prior work, decisions, dates, people, preferences, or todos when memory context is needed.',
+    '',
+  ];
+}
+
 export default definePluginEntry({
   id: 'openclaw-persistio',
   name: 'Persistio Memory',
@@ -617,6 +688,7 @@ export default definePluginEntry({
     const sentMessageKeysBySession = new Map<string, SessionMessageKeyStore>();
     const pendingMessageKeysBySession = new Map<string, SessionMessageKeyStore>();
     api.registerMemoryCapability({
+      promptBuilder: buildPersistioMemoryPromptSection,
       runtime: createMemoryRuntime(cfg, recallBreaker, api.logger),
     });
 
@@ -634,8 +706,12 @@ export default definePluginEntry({
         breaker: recallBreaker,
         logger: api.logger,
         run: async () => {
-          const recall = await client.recallBundle(query);
-          return buildMemoryBlock(recall.bundle, cfg.tokenBudget, recall.related_bundle);
+          const recall = await client.recallBundle(query, undefined, { includeRelated: cfg.includeRelatedMemories });
+          return buildMemoryBlock(
+            recall.bundle,
+            cfg.tokenBudget,
+            cfg.includeRelatedMemories ? recall.related_bundle : undefined,
+          );
         },
       });
       if (!block) return;
@@ -744,38 +820,111 @@ export default definePluginEntry({
     // AgentToolResult: { content: Array<{ type: "text", text: string }>, details: unknown }
     // -------------------------------------------------------------------------
 
+    const memoryManager = createMemorySearchManager(cfg, recallBreaker, api.logger);
+
     api.registerTool({
       name: 'memory_search',
-      label: 'Search Memory',
-      description: 'Search persistent memory for relevant facts from past conversations.',
+      label: 'Memory Search',
+      description: 'Search Persistio semantic memory. Returns bounded structured results with persistio://memory/<id> paths for memory_get.',
       parameters: Type.Object({
-        query: Type.String({ description: 'What to search for' }),
-        top_k: Type.Optional(Type.Number({ description: 'Max results to return' })),
-      }),
+        query: Type.String({ description: 'Search query' }),
+        maxResults: Type.Optional(Type.Number({ description: 'Maximum results to return' })),
+        minScore: Type.Optional(Type.Number({ description: 'Optional minimum score from 0 to 1' })),
+        corpus: Type.Optional(Type.Union([
+          Type.Literal('memory'),
+          Type.Literal('wiki'),
+          Type.Literal('all'),
+          Type.Literal('sessions'),
+        ], { description: 'Persistio supports memory corpus results' })),
+      }, { additionalProperties: false }),
       async execute(_id, params) {
-        const p = params as { query: string; top_k?: number };
-        const overrideTopK = resolvePositiveInteger(p.top_k, cfg.recallTopK);
-        const overrideCfg = { ...cfg, recallTopK: overrideTopK };
-        const recallClient = createClient(overrideCfg);
-        const memories = await runGuardedRecall({
-          operation: 'memory_search tool recall',
-          timeoutMs: cfg.recallTimeout,
-          fallback: [],
-          breaker: recallBreaker,
-          logger: api.logger,
-          run: () => recallClient.recall(p.query),
+        const p = params as {
+          query?: string;
+          maxResults?: number;
+          minScore?: number;
+          corpus?: 'memory' | 'wiki' | 'all' | 'sessions';
+        };
+        const query = typeof p.query === 'string' ? p.query.trim() : '';
+        if (!query) {
+          return jsonResult(buildMemorySearchUnavailableResult('memory_search requires a non-empty query'));
+        }
+
+        const maxResults = resolveMemorySearchLimit({
+          maxResults: p.maxResults,
+          fallback: cfg.recallTopK,
         });
-        const text = memories.length > 0
-          ? memories.map(m => `- ${m.data} [${m.subject}]`).join('\n')
-          : 'No memories found.';
-        return { content: [{ type: 'text' as const, text }], details: null };
+        const requestedCorpus = p.corpus ?? 'memory';
+        const sources: Array<'memory' | 'sessions'> = requestedCorpus === 'sessions' || requestedCorpus === 'wiki'
+          ? []
+          : ['memory' as const];
+        const startedAt = Date.now();
+
+        try {
+          const results: MemorySearchResult[] = sources.length === 0
+            ? []
+            : await memoryManager.search(query, {
+              maxResults,
+              minScore: p.minScore,
+              sources,
+            });
+
+          return jsonResult({
+            results: results.map((result) => ({ ...result, corpus: 'memory' })),
+            provider: 'persistio',
+            model: undefined,
+            fallback: false,
+            citations: 'off',
+            mode: 'persistio',
+            debug: {
+              backend: 'builtin',
+              effectiveMode: 'persistio',
+              requestedCorpus,
+              searchMs: Math.max(0, Date.now() - startedAt),
+              hits: results.length,
+            },
+          });
+        } catch (err) {
+          return jsonResult(buildMemorySearchUnavailableResult(String(err)));
+        }
       },
     });
 
     api.registerTool({
-      name: 'memory_add',
-      label: 'Add Memory',
-      description: 'Manually store a fact in persistent memory.',
+      name: 'memory_get',
+      label: 'Memory Get',
+      description: 'Read a bounded exact Persistio memory document by persistio://memory/<id> path.',
+      parameters: Type.Object({
+        path: Type.String({ description: 'Memory path returned by memory_search' }),
+        from: Type.Optional(Type.Number({ description: 'Starting line, 1-based' })),
+        lines: Type.Optional(Type.Number({ description: 'Maximum number of lines to return' })),
+        corpus: Type.Optional(Type.Union([
+          Type.Literal('memory'),
+          Type.Literal('wiki'),
+          Type.Literal('all'),
+        ])),
+      }, { additionalProperties: false }),
+      async execute(_id, params) {
+        const p = params as { path?: string; from?: number; lines?: number; corpus?: 'memory' | 'wiki' | 'all' };
+        const path = typeof p.path === 'string' ? p.path : '';
+        if (p.corpus === 'wiki') {
+          return jsonResult({ path, text: '', disabled: true, error: 'Persistio does not provide a wiki corpus' });
+        }
+        try {
+          return jsonResult(await memoryManager.readFile({
+            relPath: path,
+            from: resolveOptionalPositiveInteger(p.from),
+            lines: resolveOptionalPositiveInteger(p.lines),
+          }));
+        } catch (err) {
+          return jsonResult({ path, text: '', disabled: true, error: String(err) });
+        }
+      },
+    });
+
+    api.registerTool({
+      name: 'persistio_memory_add',
+      label: 'Add Persistio Memory',
+      description: 'Manually store a fact in Persistio memory.',
       parameters: Type.Object({
         data: Type.String({ description: 'The fact to remember' }),
         subject: Type.String({ description: 'The entity or topic this fact is about' }),
@@ -787,12 +936,12 @@ export default definePluginEntry({
         } catch (err) {
           if (isTimeoutLikeError(err)) {
             api.logger?.warn?.(
-              `openclaw-persistio: memory_add timeout after ${cfg.ingest.timeoutMs}ms; outcome is ambiguous`,
+              `openclaw-persistio: persistio_memory_add timeout after ${cfg.ingest.timeoutMs}ms; outcome is ambiguous`,
             );
             return {
               content: [{
                 type: 'text' as const,
-                text: 'Memory store request timed out; it may still complete. Check memory_list before retrying.',
+                text: 'Memory store request timed out; it may still complete. Check persistio_memory_list before retrying.',
               }],
               details: { ambiguous: true },
             };
@@ -801,12 +950,12 @@ export default definePluginEntry({
         }
         return { content: [{ type: 'text' as const, text: 'Memory stored.' }], details: null };
       },
-    });
+    }, { optional: true });
 
     api.registerTool({
-      name: 'memory_delete',
-      label: 'Delete Memory',
-      description: 'Delete a specific memory by its ID.',
+      name: 'persistio_memory_delete',
+      label: 'Delete Persistio Memory',
+      description: 'Delete a specific Persistio memory by its ID.',
       parameters: Type.Object({
         id: Type.String({ description: 'The memory ID to delete' }),
       }),
@@ -818,14 +967,14 @@ export default definePluginEntry({
     }, { optional: true });
 
     api.registerTool({
-      name: 'memory_list',
-      label: 'List Memories',
-      description: 'List all stored memories.',
+      name: 'persistio_memory_list',
+      label: 'List Persistio Memories',
+      description: 'List stored Persistio memories.',
       parameters: Type.Object({}),
       async execute(_id, _params) {
         const memories = await client.listMemories();
         const text = memories.length > 0
-          ? memories.map(m => `[${m.id}] ${m.data} (${m.subject})`).join('\n')
+          ? memories.map(m => `[${m.id}] ${truncate(m.data.replace(/\s+/g, ' ').trim(), MAX_MEMORY_SNIPPET_CHARS)} (${m.subject})`).join('\n')
           : 'No memories stored.';
         return { content: [{ type: 'text' as const, text }], details: null };
       },
