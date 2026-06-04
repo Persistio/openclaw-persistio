@@ -12,7 +12,10 @@ Hooks into OpenClaw's `before_prompt_build` and `agent_end` events to automatica
 ## Installation
 
 ```bash
-npm install -g @persistio/openclaw-plugin
+openclaw plugins install npm:@persistio/openclaw-plugin
+openclaw plugins enable openclaw-persistio
+openclaw gateway restart
+openclaw plugins inspect openclaw-persistio --runtime --json
 ```
 
 Then register it in your OpenClaw config:
@@ -21,7 +24,8 @@ Then register it in your OpenClaw config:
 {
   "plugins": {
     "entries": {
-      "persistio": {
+      "openclaw-persistio": {
+        "enabled": true,
         "package": "@persistio/openclaw-plugin",
         "config": {
           "baseURL": "https://api.persistio.ai",
@@ -63,6 +67,8 @@ Then register it in your OpenClaw config:
 | `send.roles.user` | `"enabled"` or `"disabled"` | | `"enabled"` | Send user messages to Persistio ingest |
 | `send.roles.agent` | `"enabled"` or `"disabled"` | | `"enabled"` | Send agent/assistant messages to Persistio ingest |
 | `send.roles.tool` | `"enabled"` or `"disabled"` | | `"disabled"` | Send tool messages to Persistio ingest |
+
+Recall is fail-open by design. If Persistio does not answer within `recallTimeout`, the plugin returns no memory for that turn instead of blocking the OpenClaw lane. After three consecutive recall/search failures it opens a 60 second circuit breaker and skips recall immediately during the cooldown. The plugin also registers a bounded `before_prompt_build` hook timeout; operators can still override this in OpenClaw with `plugins.entries.<id>.hooks.timeouts.before_prompt_build`.
 
 `agent_end` receives a snapshot of the active OpenClaw transcript, so the plugin deduplicates per session and only sends each user, agent, or enabled tool message once per plugin process. Deduplication keys are bounded in memory and expire after 24 hours of session inactivity.
 

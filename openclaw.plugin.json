@@ -2,7 +2,7 @@
   "id": "openclaw-persistio",
   "name": "Persistio Memory",
   "description": "Persistent semantic memory for OpenClaw via Persistio",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "kind": "memory",
   "activation": {
     "onStartup": true
@@ -15,6 +15,14 @@
       "memory_list"
     ]
   },
+  "toolMetadata": {
+    "memory_delete": {
+      "optional": true
+    },
+    "memory_list": {
+      "optional": true
+    }
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -26,10 +34,12 @@
         "type": "string"
       },
       "tokenBudget": {
-        "type": "number"
+        "type": "number",
+        "minimum": 1
       },
       "recallTopK": {
-        "type": "number"
+        "type": "number",
+        "minimum": 1
       },
       "recallMinSimilarity": {
         "type": "number",
@@ -37,20 +47,24 @@
         "maximum": 1
       },
       "recallTimeout": {
-        "type": "number"
+        "type": "number",
+        "minimum": 1
       },
       "ingest": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "timeoutMs": {
-            "type": "number"
+            "type": "number",
+            "minimum": 1
           },
           "maxChunkChars": {
-            "type": "number"
+            "type": "number",
+            "minimum": 256
           },
           "maxChunksPerTurn": {
-            "type": "number"
+            "type": "number",
+            "minimum": 1
           },
           "skipSubagentSessions": {
             "type": "boolean"
@@ -60,7 +74,8 @@
             "additionalProperties": false,
             "properties": {
               "maxCharsPerMessage": {
-                "type": "number"
+                "type": "number",
+                "minimum": 1
               }
             }
           },
@@ -76,22 +91,28 @@
                 ]
               },
               "maxCharsPerMessage": {
-                "type": "number"
+                "type": "number",
+                "minimum": 1
               },
               "maxCharsAfterFiltering": {
-                "type": "number"
+                "type": "number",
+                "minimum": 1
               },
               "maxCharsPerTurn": {
-                "type": "number"
+                "type": "number",
+                "minimum": 1
               },
               "largeBlockThresholdChars": {
-                "type": "number"
+                "type": "number",
+                "minimum": 1
               },
               "largeBlockThresholdLines": {
-                "type": "number"
+                "type": "number",
+                "minimum": 1
               },
               "maxTableRows": {
-                "type": "number"
+                "type": "number",
+                "minimum": 1
               }
             }
           }

@@ -44,6 +44,9 @@ export interface RecallBundleResponse {
     bundle: RecallBundle;
     related_bundle?: RecallBundle;
 }
+export declare class PersistioTimeoutError extends Error {
+    constructor(operation: string, timeoutMs: number);
+}
 export declare class PersistioClient {
     private readonly baseURL;
     private readonly apiKey;
@@ -51,6 +54,7 @@ export declare class PersistioClient {
     private readonly recallMinSimilarity?;
     private readonly recallTimeout;
     private readonly ingestTimeout;
+    private readonly writeTimeout;
     constructor(config: PersistioConfig);
     private headers;
     recall(query: string): Promise<PersistioMemory[]>;

@@ -29,6 +29,41 @@ const DEFAULT_SEND_ROLES: PersistioConfig['send']['roles'] = {
 const MESSAGE_KEY_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_TRACKED_SESSIONS = 250;
 const MAX_SENT_KEYS_PER_SESSION = 2000;
+const RECALL_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3;
+const RECALL_CIRCUIT_BREAKER_COOLDOWN_MS = 60_000;
+const RECALL_GUARD_MARGIN_MS = 250;
+
+interface PluginLogger {
+  debug?: (message: string) => void;
+  warn?: (message: string) => void;
+}
+
+class RecallCircuitBreaker {
+  private consecutiveFailures = 0;
+  private openedUntil = 0;
+
+  canAttempt(now = Date.now()): boolean {
+    return now >= this.openedUntil;
+  }
+
+  remainingMs(now = Date.now()): number {
+    return Math.max(0, this.openedUntil - now);
+  }
+
+  recordSuccess(): void {
+    this.consecutiveFailures = 0;
+    this.openedUntil = 0;
+  }
+
+  recordFailure(now = Date.now()): boolean {
+    this.consecutiveFailures += 1;
+    if (this.consecutiveFailures >= RECALL_CIRCUIT_BREAKER_FAILURE_THRESHOLD) {
+      this.openedUntil = now + RECALL_CIRCUIT_BREAKER_COOLDOWN_MS;
+      return true;
+    }
+    return false;
+  }
+}
 
 function resolveSendConfig(raw: Record<string, unknown>): PersistioConfig['send'] {
   const send = raw['send'];
@@ -54,15 +89,21 @@ function resolveRecallMinSimilarity(value: unknown): number | undefined {
     : undefined;
 }
 
+function resolvePositiveInteger(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 1
+    ? Math.floor(value)
+    : fallback;
+}
+
 function resolveConfig(raw: unknown): PersistioConfig {
   const c = (raw ?? {}) as Record<string, unknown>;
   return {
     baseURL: typeof c['baseURL'] === 'string' ? c['baseURL'] : '',
     apiKey: typeof c['apiKey'] === 'string' ? c['apiKey'] : '',
-    tokenBudget: typeof c['tokenBudget'] === 'number' ? c['tokenBudget'] : 2000,
-    recallTopK: typeof c['recallTopK'] === 'number' ? c['recallTopK'] : 10,
+    tokenBudget: resolvePositiveInteger(c['tokenBudget'], 2000),
+    recallTopK: resolvePositiveInteger(c['recallTopK'], 10),
     recallMinSimilarity: resolveRecallMinSimilarity(c['recallMinSimilarity']),
-    recallTimeout: typeof c['recallTimeout'] === 'number' ? c['recallTimeout'] : 5000,
+    recallTimeout: resolvePositiveInteger(c['recallTimeout'], 5000),
     ingest: resolveIngestPolicy(c['ingest']),
     send: resolveSendConfig(c),
   };
@@ -139,29 +180,37 @@ function buildRecallQuery(event: { prompt?: string; messages?: unknown[] }): str
   return truncate(parts.join('\n'), 600);
 }
 
-function buildMemoryBlock(bundle: RecallBundle, budget: number, relatedBundle?: RecallBundle): string {
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+function buildMemoryBlock(bundle: RecallBundle | undefined, budget: number, relatedBundle?: RecallBundle): string {
+  if (!bundle || typeof bundle !== 'object') return '';
+
   const sections: Array<{ title: string; items: string[] }> = [
-    { title: 'Behavioural rules', items: bundle.user_rules },
-    { title: 'Preferences', items: bundle.user_preferences },
-    { title: 'Task patterns', items: bundle.task_patterns },
-    { title: 'Workflows', items: bundle.workflows },
-    { title: 'Project', items: bundle.project },
-    { title: 'Constraints', items: bundle.constraints },
-    { title: 'Decisions', items: bundle.decisions },
-    { title: 'System facts', items: bundle.system_facts },
-    { title: 'Domain knowledge', items: bundle.domain_knowledge },
+    { title: 'Behavioural rules', items: toStringArray(bundle.user_rules) },
+    { title: 'Preferences', items: toStringArray(bundle.user_preferences) },
+    { title: 'Task patterns', items: toStringArray(bundle.task_patterns) },
+    { title: 'Workflows', items: toStringArray(bundle.workflows) },
+    { title: 'Project', items: toStringArray(bundle.project) },
+    { title: 'Constraints', items: toStringArray(bundle.constraints) },
+    { title: 'Decisions', items: toStringArray(bundle.decisions) },
+    { title: 'System facts', items: toStringArray(bundle.system_facts) },
+    { title: 'Domain knowledge', items: toStringArray(bundle.domain_knowledge) },
   ];
-  if (relatedBundle) {
+  if (relatedBundle && typeof relatedBundle === 'object') {
     sections.push(
-      { title: 'Related behavioural rules', items: relatedBundle.user_rules },
-      { title: 'Related preferences', items: relatedBundle.user_preferences },
-      { title: 'Related task patterns', items: relatedBundle.task_patterns },
-      { title: 'Related workflows', items: relatedBundle.workflows },
-      { title: 'Related project', items: relatedBundle.project },
-      { title: 'Related constraints', items: relatedBundle.constraints },
-      { title: 'Related decisions', items: relatedBundle.decisions },
-      { title: 'Related system facts', items: relatedBundle.system_facts },
-      { title: 'Related domain knowledge', items: relatedBundle.domain_knowledge },
+      { title: 'Related behavioural rules', items: toStringArray(relatedBundle.user_rules) },
+      { title: 'Related preferences', items: toStringArray(relatedBundle.user_preferences) },
+      { title: 'Related task patterns', items: toStringArray(relatedBundle.task_patterns) },
+      { title: 'Related workflows', items: toStringArray(relatedBundle.workflows) },
+      { title: 'Related project', items: toStringArray(relatedBundle.project) },
+      { title: 'Related constraints', items: toStringArray(relatedBundle.constraints) },
+      { title: 'Related decisions', items: toStringArray(relatedBundle.decisions) },
+      { title: 'Related system facts', items: toStringArray(relatedBundle.system_facts) },
+      { title: 'Related domain knowledge', items: toStringArray(relatedBundle.domain_knowledge) },
     );
   }
 
@@ -329,6 +378,62 @@ function isTimeoutLikeError(err: unknown): boolean {
   return message.includes('timeout') || message.includes('aborted');
 }
 
+async function runGuardedRecall<T>(args: {
+  operation: string;
+  timeoutMs: number;
+  fallback: T;
+  breaker: RecallCircuitBreaker;
+  logger?: PluginLogger;
+  run: () => Promise<T>;
+}): Promise<T> {
+  const now = Date.now();
+  if (!args.breaker.canAttempt(now)) {
+    args.logger?.warn?.(
+      `openclaw-persistio: ${args.operation} skipped; recall circuit breaker open `
+      + `for ${args.breaker.remainingMs(now)}ms`,
+    );
+    return args.fallback;
+  }
+
+  try {
+    const result = await withPluginDeadline(args.operation, args.timeoutMs + RECALL_GUARD_MARGIN_MS, args.run);
+    args.breaker.recordSuccess();
+    return result;
+  } catch (err) {
+    const opened = args.breaker.recordFailure();
+    args.logger?.warn?.(
+      `openclaw-persistio: ${args.operation} failed open: ${String(err)}`
+      + (opened ? `; recall circuit breaker open for ${RECALL_CIRCUIT_BREAKER_COOLDOWN_MS}ms` : ''),
+    );
+    return args.fallback;
+  }
+}
+
+async function withPluginDeadline<T>(
+  operation: string,
+  timeoutMs: number,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return run();
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      const err = new Error(`Persistio ${operation} exceeded plugin deadline after ${timeoutMs}ms`);
+      err.name = 'TimeoutError';
+      reject(err);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([run(), deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 const PERSISTIO_MEMORY_PATH_PREFIX = 'persistio://memory/';
 
 function createClient(config: PersistioConfig, recallTopK = config.recallTopK): PersistioClient {
@@ -379,7 +484,11 @@ async function probePersistio(client: PersistioClient): Promise<MemoryEmbeddingP
   }
 }
 
-function createMemorySearchManager(config: PersistioConfig): MemorySearchManager {
+function createMemorySearchManager(
+  config: PersistioConfig,
+  recallBreaker: RecallCircuitBreaker,
+  logger?: PluginLogger,
+): MemorySearchManager {
   const client = createClient(config);
 
   return {
@@ -400,7 +509,14 @@ function createMemorySearchManager(config: PersistioConfig): MemorySearchManager
 
       const recallTopK = typeof opts?.maxResults === 'number' ? opts.maxResults : config.recallTopK;
       const recallClient = createClient(config, recallTopK);
-      const memories = await recallClient.recall(query);
+      const memories = await runGuardedRecall({
+        operation: 'memory search recall',
+        timeoutMs: config.recallTimeout,
+        fallback: [],
+        breaker: recallBreaker,
+        logger,
+        run: () => recallClient.recall(query),
+      });
 
       return memories
         .map((memory): MemorySearchResult => {
@@ -469,11 +585,11 @@ function createMemorySearchManager(config: PersistioConfig): MemorySearchManager
   };
 }
 
-function createMemoryRuntime(config: PersistioConfig) {
+function createMemoryRuntime(config: PersistioConfig, recallBreaker: RecallCircuitBreaker, logger?: PluginLogger) {
   return {
     async getMemorySearchManager() {
       return {
-        manager: createMemorySearchManager(config),
+        manager: createMemorySearchManager(config, recallBreaker, logger),
       };
     },
 
@@ -497,10 +613,11 @@ export default definePluginEntry({
     }
 
     const client = createClient(cfg);
+    const recallBreaker = new RecallCircuitBreaker();
     const sentMessageKeysBySession = new Map<string, SessionMessageKeyStore>();
     const pendingMessageKeysBySession = new Map<string, SessionMessageKeyStore>();
     api.registerMemoryCapability({
-      runtime: createMemoryRuntime(cfg),
+      runtime: createMemoryRuntime(cfg, recallBreaker, api.logger),
     });
 
     // -------------------------------------------------------------------------
@@ -509,16 +626,21 @@ export default definePluginEntry({
     // Return: { appendSystemContext?: string }
     // -------------------------------------------------------------------------
     api.on('before_prompt_build', async (event) => {
-      try {
-        const query = buildRecallQuery(event);
-        const recall = await client.recallBundle(query);
-        const block = buildMemoryBlock(recall.bundle, cfg.tokenBudget, recall.related_bundle);
-        if (!block) return;
-        return { appendSystemContext: block };
-      } catch (err) {
-        api.logger?.warn?.(`openclaw-persistio: recall error: ${String(err)}`);
-      }
-    });
+      const query = buildRecallQuery(event);
+      const block = await runGuardedRecall({
+        operation: 'before_prompt_build recall',
+        timeoutMs: cfg.recallTimeout,
+        fallback: '',
+        breaker: recallBreaker,
+        logger: api.logger,
+        run: async () => {
+          const recall = await client.recallBundle(query);
+          return buildMemoryBlock(recall.bundle, cfg.tokenBudget, recall.related_bundle);
+        },
+      });
+      if (!block) return;
+      return { appendSystemContext: block };
+    }, { timeoutMs: cfg.recallTimeout + RECALL_GUARD_MARGIN_MS + 250 });
 
     // -------------------------------------------------------------------------
     // agent_end — ingest new turn messages (fire and forget)
@@ -632,10 +754,17 @@ export default definePluginEntry({
       }),
       async execute(_id, params) {
         const p = params as { query: string; top_k?: number };
-        const overrideTopK = typeof p.top_k === 'number' ? p.top_k : cfg.recallTopK;
+        const overrideTopK = resolvePositiveInteger(p.top_k, cfg.recallTopK);
         const overrideCfg = { ...cfg, recallTopK: overrideTopK };
-        const c = new PersistioClient(overrideCfg);
-        const memories = await c.recall(p.query);
+        const recallClient = createClient(overrideCfg);
+        const memories = await runGuardedRecall({
+          operation: 'memory_search tool recall',
+          timeoutMs: cfg.recallTimeout,
+          fallback: [],
+          breaker: recallBreaker,
+          logger: api.logger,
+          run: () => recallClient.recall(p.query),
+        });
         const text = memories.length > 0
           ? memories.map(m => `- ${m.data} [${m.subject}]`).join('\n')
           : 'No memories found.';
@@ -653,7 +782,23 @@ export default definePluginEntry({
       }),
       async execute(_id, params) {
         const p = params as { data: string; subject: string };
-        await client.addMemory(p.data, p.subject);
+        try {
+          await client.addMemory(p.data, p.subject);
+        } catch (err) {
+          if (isTimeoutLikeError(err)) {
+            api.logger?.warn?.(
+              `openclaw-persistio: memory_add timeout after ${cfg.ingest.timeoutMs}ms; outcome is ambiguous`,
+            );
+            return {
+              content: [{
+                type: 'text' as const,
+                text: 'Memory store request timed out; it may still complete. Check memory_list before retrying.',
+              }],
+              details: { ambiguous: true },
+            };
+          }
+          throw err;
+        }
         return { content: [{ type: 'text' as const, text: 'Memory stored.' }], details: null };
       },
     });

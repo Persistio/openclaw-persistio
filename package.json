@@ -1,6 +1,6 @@
 {
   "name": "@persistio/openclaw-plugin",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "OpenClaw plugin for Persistio \u2014 persistent semantic memory for AI agents",
   "type": "module",
   "main": "./dist/index.js",
@@ -42,7 +42,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node test/config-schema.test.mjs && node test/ingest-policy.test.mjs"
+    "test": "npm run build && node test/config-schema.test.mjs && node test/ingest-policy.test.mjs && node test/client-timeout.test.mjs"
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.0"
