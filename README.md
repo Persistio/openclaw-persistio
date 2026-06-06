@@ -2,7 +2,7 @@
 
 OpenClaw-native long-term memory powered by Persistio.
 
-This is the production Persistio plugin for OpenClaw. Version `0.2.x` promotes the OpenClaw-native memory-slot architecture that was tested separately as `openclaw-persistio-v2`.
+This is the official Persistio memory-slot plugin for OpenClaw.
 
 ## Design
 
