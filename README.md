@@ -92,25 +92,7 @@ Do not add a `package` field to the config entry. OpenClaw records the npm packa
 | `capture.roles.assistant` | `bounded` | Capture assistant messages after deterministic noise filtering |
 | `capture.roles.tool` | `disabled` | Capture tool messages |
 
-## Upgrade from 0.1.x
-
-Install the `0.2.x` package, configure `openclaw-persistio-v2`, and point the OpenClaw memory slot at the new plugin id:
-
-```json
-{
-  "plugins": {
-    "slots": {
-      "memory": "openclaw-persistio-v2"
-    }
-  }
-}
-```
-
-Keep the old `openclaw-persistio` entry disabled or remove it after confirming the new slot behaves correctly. The v2 id is intentionally distinct so operators opt into the new memory-slot behavior instead of silently changing an existing v1 install.
-
-## Benchmark Posture
-
-For behavioral benchmark work, leave `autoRecall=true` and `autoCapture=true`, keep recall under a tight timeout, and keep `includePending` / `includeRelated` off unless the specific benchmark requires them.
+## Runtime Shape
 
 The expected turn shape is:
 
