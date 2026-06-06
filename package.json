@@ -1,7 +1,7 @@
 {
   "name": "@persistio/openclaw-plugin",
-  "version": "0.1.8",
-  "description": "OpenClaw plugin for Persistio \u2014 persistent semantic memory for AI agents",
+  "version": "0.2.0",
+  "description": "OpenClaw-native Persistio long-term memory plugin",
   "type": "module",
   "main": "./dist/index.js",
   "exports": {
@@ -24,9 +24,8 @@
     "openclaw",
     "openclaw-plugin",
     "memory",
-    "ai",
-    "agents",
-    "persistio"
+    "persistio",
+    "long-term-memory"
   ],
   "openclaw": {
     "extensions": [
@@ -36,22 +35,22 @@
       "./dist/index.js"
     ],
     "compat": {
-      "pluginApi": ">=2026.3.24-beta.2",
-      "minGatewayVersion": "2026.3.24-beta.2"
+      "pluginApi": ">=2026.4.10",
+      "minGatewayVersion": "2026.4.10"
     }
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node test/config-schema.test.mjs && node test/ingest-policy.test.mjs && node test/client-timeout.test.mjs"
+    "test": "npm run build && node test/config.test.mjs && node test/formatting.test.mjs && node test/client-timeout.test.mjs && node test/tool-timeout.test.mjs"
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.0"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.3.24-beta.2"
+    "openclaw": ">=2026.4.10"
   }
 }

@@ -5,42 +5,17 @@ export class PersistioTimeoutError extends Error {
     }
 }
 export class PersistioClient {
+    config;
     baseURL;
     apiKey;
-    recallTopK;
-    recallMinSimilarity;
-    recallTimeout;
-    recallIncludePending;
-    includeRelatedMemories;
-    ingestTimeout;
-    writeTimeout;
     constructor(config) {
+        this.config = config;
         this.baseURL = config.baseURL.replace(/\/$/, '');
         this.apiKey = config.apiKey;
-        this.recallTopK = config.recallTopK;
-        this.recallMinSimilarity = config.recallMinSimilarity;
-        this.recallTimeout = config.recallTimeout;
-        this.recallIncludePending = config.recallIncludePending;
-        this.includeRelatedMemories = config.includeRelatedMemories;
-        this.ingestTimeout = config.ingest.timeoutMs;
-        this.writeTimeout = config.ingest.timeoutMs;
     }
-    headers() {
-        return {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`,
-        };
-    }
-    async recall(query) {
-        return withRequestDeadline('recall', this.recallTimeout, async (signal) => {
-            const body = {
-                query,
-                top_k: this.recallTopK,
-                include_pending: this.recallIncludePending
-            };
-            if (typeof this.recallMinSimilarity === 'number') {
-                body.min_similarity = this.recallMinSimilarity;
-            }
+    async recall(query, options = {}) {
+        return withRequestDeadline('recall', this.config.recall.timeoutMs, async (signal) => {
+            const body = this.buildRecallBody(query, options.maxResults);
             const res = await fetch(`${this.baseURL}/v1/recall`, {
                 method: 'POST',
                 headers: this.headers(),
@@ -48,22 +23,19 @@ export class PersistioClient {
                 signal,
             });
             if (!res.ok)
-                throw new Error(`Persistio recall failed: ${res.status}`);
+                throw new Error(await formatHttpError('recall', res));
             const data = await res.json();
-            return data.memories ?? [];
+            return {
+                memories: Array.isArray(data.memories) ? data.memories : [],
+                relatedMemories: Array.isArray(data.related_memories) ? data.related_memories : [],
+            };
         });
     }
-    async recallBundle(query, topK, options = {}) {
-        return withRequestDeadline('recallBundle', this.recallTimeout, async (signal) => {
+    async recallBundle(query) {
+        return withRequestDeadline('recallBundle', this.config.recall.timeoutMs, async (signal) => {
             const body = {
-                query,
-                top_k: topK ?? this.recallTopK,
-                include_pending: this.recallIncludePending,
-                include_related: options.includeRelated ?? this.includeRelatedMemories
+                ...this.buildRecallBody(query, this.config.recall.maxResults),
             };
-            if (typeof this.recallMinSimilarity === 'number') {
-                body.min_similarity = this.recallMinSimilarity;
-            }
             const res = await fetch(`${this.baseURL}/v1/recall?format=bundle`, {
                 method: 'POST',
                 headers: this.headers(),
@@ -71,15 +43,14 @@ export class PersistioClient {
                 signal,
             });
             if (!res.ok)
-                throw new Error(`Persistio recallBundle failed: ${res.status}`);
-            const data = await res.json();
-            return data;
+                throw new Error(await formatHttpError('recallBundle', res));
+            return await res.json();
         });
     }
     async ingest(sessionId, chunks) {
         if (chunks.length === 0)
             return;
-        await withRequestDeadline('ingest', this.ingestTimeout, async (signal) => {
+        await withRequestDeadline('ingest', this.config.capture.timeoutMs, async (signal) => {
             const res = await fetch(`${this.baseURL}/v1/ingest`, {
                 method: 'POST',
                 headers: this.headers(),
@@ -90,8 +61,8 @@ export class PersistioClient {
                 throw new Error(await formatHttpError('ingest', res));
         });
     }
-    async addMemory(data, subject) {
-        await withRequestDeadline('addMemory', this.writeTimeout, async (signal) => {
+    async storeMemory(data, subject) {
+        return withRequestDeadline('memory_store', this.config.capture.timeoutMs, async (signal) => {
             const res = await fetch(`${this.baseURL}/v1/memories`, {
                 method: 'POST',
                 headers: this.headers(),
@@ -99,48 +70,41 @@ export class PersistioClient {
                 signal,
             });
             if (!res.ok)
-                throw new Error(`Persistio addMemory failed: ${res.status}`);
+                throw new Error(await formatHttpError('memory_store', res));
+            return await res.json();
         });
     }
-    async deleteMemory(id) {
-        await withRequestDeadline('deleteMemory', this.writeTimeout, async (signal) => {
-            const res = await fetch(`${this.baseURL}/v1/memories/${id}`, {
+    async forgetMemory(id) {
+        await withRequestDeadline('memory_forget', this.config.capture.timeoutMs, async (signal) => {
+            const res = await fetch(`${this.baseURL}/v1/memories/${encodeURIComponent(id)}`, {
                 method: 'DELETE',
                 headers: this.headers(),
                 signal,
             });
             if (!res.ok)
-                throw new Error(`Persistio deleteMemory failed: ${res.status}`);
+                throw new Error(await formatHttpError('memory_forget', res));
         });
     }
-    async getMemory(id, options = {}) {
-        return withRequestDeadline('getMemory', this.recallTimeout, async (signal) => {
-            const query = options.includePending ? '?include_pending=true' : '';
-            const res = await fetch(`${this.baseURL}/v1/memories/${id}${query}`, {
-                headers: this.headers(),
-                signal,
-            });
-            if (res.status === 404)
-                return null;
-            if (!res.ok)
-                throw new Error(`Persistio getMemory failed: ${res.status}`);
-            return await res.json();
-        });
+    buildRecallBody(query, maxResults = this.config.recall.maxResults) {
+        const body = {
+            query,
+            top_k: maxResults,
+            include_pending: this.config.recall.includePending,
+            include_related: this.config.recall.includeRelated,
+        };
+        if (typeof this.config.recall.minSimilarity === 'number') {
+            body.min_similarity = this.config.recall.minSimilarity;
+        }
+        return body;
     }
-    async listMemories() {
-        return withRequestDeadline('listMemories', this.recallTimeout, async (signal) => {
-            const res = await fetch(`${this.baseURL}/v1/memories`, {
-                headers: this.headers(),
-                signal,
-            });
-            if (!res.ok)
-                throw new Error(`Persistio listMemories failed: ${res.status}`);
-            const data = await res.json();
-            return data.items ?? [];
-        });
+    headers() {
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`,
+        };
     }
 }
-async function withRequestDeadline(operation, timeoutMs, run) {
+export async function withRequestDeadline(operation, timeoutMs, run) {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
         return run(new AbortController().signal);
     }
@@ -167,9 +131,7 @@ async function withRequestDeadline(operation, timeoutMs, run) {
     }
 }
 function isAbortLikeError(err) {
-    if (!(err instanceof Error))
-        return false;
-    return err.name === 'AbortError' || err.name === 'TimeoutError';
+    return err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
 }
 async function formatHttpError(operation, res) {
     let detail = '';
@@ -177,7 +139,7 @@ async function formatHttpError(operation, res) {
         detail = (await res.text()).trim().slice(0, 500);
     }
     catch {
-        // Ignore response body read failures; the status is still actionable.
+        // Status code is still useful if the body cannot be read.
     }
     return detail
         ? `Persistio ${operation} failed: ${res.status} ${detail}`

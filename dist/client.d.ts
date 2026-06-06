@@ -1,78 +1,55 @@
-import type { PersistioIngestPolicy } from './ingest-policy.js';
-export interface PersistioConfig {
-    baseURL: string;
-    apiKey: string;
-    tokenBudget: number;
-    recallTopK: number;
-    recallMinSimilarity?: number;
-    recallTimeout: number;
-    recallIncludePending: boolean;
-    includeRelatedMemories: boolean;
-    ingest: PersistioIngestPolicy;
-    send: PersistioSendConfig;
-}
-export type PersistioSendRoleStatus = 'enabled' | 'disabled';
-export interface PersistioSendConfig {
-    roles: {
-        user: PersistioSendRoleStatus;
-        agent: PersistioSendRoleStatus;
-        tool: PersistioSendRoleStatus;
-    };
-}
+import type { PersistioV2Config } from './config.js';
 export interface PersistioMemory {
     id: string;
     data: string;
     subject: string;
     similarity?: number;
-    categories: string[];
-    confidence: number;
-}
-export interface GetMemoryOptions {
-    includePending?: boolean;
+    confidence?: number;
+    categories?: string[];
+    source?: string;
+    edge_type?: string | null;
 }
 export interface RecallBundle {
     global_user_rules?: string[];
-    user_rules: string[];
-    user_preferences: string[];
-    task_patterns: string[];
-    workflows: string[];
-    project: string[];
-    constraints: string[];
-    decisions: string[];
-    system_facts: string[];
-    domain_knowledge: string[];
+    user_rules?: string[];
+    user_preferences?: string[];
+    task_patterns?: string[];
+    workflows?: string[];
+    project?: string[];
+    constraints?: string[];
+    decisions?: string[];
+    system_facts?: string[];
+    domain_knowledge?: string[];
 }
 export interface RecallBundleResponse {
-    bundle: RecallBundle;
+    bundle?: RecallBundle;
     related_bundle?: RecallBundle;
 }
-export interface RecallBundleOptions {
-    includeRelated?: boolean;
+export interface RecallResult {
+    memories: PersistioMemory[];
+    relatedMemories: PersistioMemory[];
+}
+export interface IngestChunk {
+    role: string;
+    content: string;
+    timestamp: string;
 }
 export declare class PersistioTimeoutError extends Error {
     constructor(operation: string, timeoutMs: number);
 }
 export declare class PersistioClient {
+    private readonly config;
     private readonly baseURL;
     private readonly apiKey;
-    private readonly recallTopK;
-    private readonly recallMinSimilarity?;
-    private readonly recallTimeout;
-    private readonly recallIncludePending;
-    private readonly includeRelatedMemories;
-    private readonly ingestTimeout;
-    private readonly writeTimeout;
-    constructor(config: PersistioConfig);
+    constructor(config: PersistioV2Config);
+    recall(query: string, options?: {
+        maxResults?: number;
+    }): Promise<RecallResult>;
+    recallBundle(query: string): Promise<RecallBundleResponse>;
+    ingest(sessionId: string, chunks: IngestChunk[]): Promise<void>;
+    storeMemory(data: string, subject: string): Promise<PersistioMemory>;
+    forgetMemory(id: string): Promise<void>;
+    private buildRecallBody;
     private headers;
-    recall(query: string): Promise<PersistioMemory[]>;
-    recallBundle(query: string, topK?: number, options?: RecallBundleOptions): Promise<RecallBundleResponse>;
-    ingest(sessionId: string, chunks: Array<{
-        role: string;
-        content: string;
-        timestamp: string;
-    }>): Promise<void>;
-    addMemory(data: string, subject: string): Promise<void>;
-    deleteMemory(id: string): Promise<void>;
-    getMemory(id: string, options?: GetMemoryOptions): Promise<PersistioMemory | null>;
-    listMemories(): Promise<PersistioMemory[]>;
 }
+export declare function withRequestDeadline<T>(operation: string, timeoutMs: number, run: (signal: AbortSignal) => Promise<T>): Promise<T>;

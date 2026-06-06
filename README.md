@@ -1,107 +1,121 @@
 # @persistio/openclaw-plugin
 
-OpenClaw plugin for [Persistio](https://persistio.ai) — persistent semantic memory for AI agents.
+OpenClaw-native long-term memory powered by Persistio.
 
-Hooks into OpenClaw's `before_prompt_build` and `agent_end` events to recall a small memory context into prompts and ingest new conversation turns after each run. Registers as an OpenClaw memory provider with compatible `memory_search` and `memory_get` tools, plus optional Persistio management tools under the `persistio_*` namespace.
+This is the production Persistio plugin for OpenClaw. Version `0.2.x` promotes the OpenClaw-native memory-slot architecture that was tested separately as `openclaw-persistio-v2`.
 
-## Requirements
+## Design
 
-- A running [Persistio](https://github.com/chriscoveyduck/persistio) instance (`api.persistio.ai` or self-hosted)
-- OpenClaw `>=2026.3.24-beta.2`
+Persistio v2 separates the memory surfaces:
 
-## Installation
+- `memory_recall` lets the model explicitly retrieve durable Persistio memory.
+- `memory_store` stores a deliberate durable fact, preference, decision, or project note.
+- `memory_forget` deletes a known memory id or returns candidate memories for a query.
+- `autoRecall` optionally injects a small bounded memory block before a turn.
+- `autoCapture` optionally captures bounded post-turn messages without awaiting Persistio from the OpenClaw hook.
 
-```bash
-openclaw plugins install npm:@persistio/openclaw-plugin
-openclaw plugins enable openclaw-persistio
-openclaw gateway restart
-openclaw plugins inspect openclaw-persistio --runtime --json
-```
+The plugin registers as an OpenClaw memory plugin and provides prompt guidance. It does not replace OpenClaw's generic `memory_search` / `memory_get` tools in this first v2 package.
 
-To upgrade an existing install, use the same pinned npm source and restart the Gateway:
+## Install
 
 ```bash
-openclaw plugins install npm:@persistio/openclaw-plugin@0.1.8
+openclaw plugins install npm:@persistio/openclaw-plugin@0.2.0
+openclaw plugins enable openclaw-persistio-v2
 openclaw gateway restart
-openclaw plugins inspect openclaw-persistio --runtime --json
 ```
 
-Then register it in your OpenClaw config:
+To test it as the active memory slot:
 
 ```json
 {
   "plugins": {
+    "slots": {
+      "memory": "openclaw-persistio-v2"
+    },
     "entries": {
-      "openclaw-persistio": {
+      "openclaw-persistio-v2": {
         "enabled": true,
         "package": "@persistio/openclaw-plugin",
+        "hooks": {
+          "allowConversationAccess": true
+        },
         "config": {
           "baseURL": "https://api.persistio.ai",
           "apiKey": "your-vault-api-key",
-          "tokenBudget": 400,
-          "recallTopK": 4,
-          "recallTimeout": 1500,
-          "recallMinSimilarity": 0.3,
-          "send": {
+          "autoRecall": true,
+          "autoCapture": true,
+          "recall": {
+            "timeoutMs": 1200,
+            "maxResults": 4,
+            "tokenBudget": 400,
+            "minSimilarity": 0.45,
+            "includePending": false,
+            "includeRelated": false
+          },
+          "capture": {
+            "timeoutMs": 10000,
             "roles": {
               "user": "enabled",
-              "agent": "enabled",
+              "assistant": "bounded",
               "tool": "disabled"
             }
           }
         }
       }
-    },
-    "slots": {
-      "memory": "openclaw-persistio"
     }
   }
 }
 ```
 
+`hooks.allowConversationAccess` is required when `autoCapture` is enabled because the plugin reads the completed conversation snapshot from `agent_end`.
+
 ## Configuration
 
-| Option | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `baseURL` | string | ✅ | — | Base URL of your Persistio instance |
-| `apiKey` | string | ✅ | — | Vault API key |
-| `tokenBudget` | number | | `400` | Max tokens to inject into the system prompt |
-| `recallTopK` | number | | `4` | Number of memories to retrieve per recall |
-| `recallMinSimilarity` | number from `0` to `1` | | Persistio server default | Optional semantic recall quality floor |
-| `recallTimeout` | number | | `1500` | HTTP timeout for recall requests (ms) |
-| `recallIncludePending` | boolean | | `false` | Include fresh candidate memories in recall results |
-| `includeRelatedMemories` | boolean | | `false` | Include graph-related memories in prompt recall bundles |
-| `ingest.timeoutMs` | number | | `30000` | HTTP timeout for ingest requests (ms). Timed-out requests are treated as ambiguous and not retried automatically |
-| `ingest.maxChunkChars` | number | | `6000` | Maximum characters per chunk sent to Persistio |
-| `ingest.maxChunksPerTurn` | number | | `12` | Maximum chunks sent from a single OpenClaw turn |
-| `ingest.skipSubagentSessions` | boolean | | `true` | Skip `agent:*` sessions unless they are `agent:main:*` |
-| `ingest.user.maxCharsPerMessage` | number | | `24000` | Maximum user-message characters considered for ingest before chunking |
-| `ingest.agent.mode` | `"bounded"` or `"raw"` | | `"bounded"` | Assistant ingest shaping mode. `bounded` collapses obvious large noisy blocks before chunking |
-| `ingest.agent.maxCharsPerMessage` | number | | `24000` | Maximum assistant-message characters considered after filtering |
-| `ingest.agent.maxCharsAfterFiltering` | number | | `9000` | Maximum assistant-message characters retained after deterministic filtering |
-| `ingest.agent.maxCharsPerTurn` | number | | `24000` | Maximum assistant-message characters sent from one turn |
-| `send.roles.user` | `"enabled"` or `"disabled"` | | `"enabled"` | Send user messages to Persistio ingest |
-| `send.roles.agent` | `"enabled"` or `"disabled"` | | `"enabled"` | Send agent/assistant messages to Persistio ingest |
-| `send.roles.tool` | `"enabled"` or `"disabled"` | | `"disabled"` | Send tool messages to Persistio ingest |
+| Option | Default | Description |
+|---|---:|---|
+| `autoRecall` | `true` | Inject a small fail-open memory block before the model turn |
+| `autoCapture` | `true` | Capture bounded post-turn messages asynchronously |
+| `recall.timeoutMs` | `1200` | HTTP timeout for recall and recall-bundle calls |
+| `recall.maxResults` | `4` | Maximum memories returned by recall |
+| `recall.tokenBudget` | `400` | Approximate prompt-token budget for auto-recall |
+| `recall.minSimilarity` | unset | Optional Persistio similarity floor |
+| `recall.includePending` | `false` | Include pending candidate memories in hot-path recall |
+| `recall.includeRelated` | `false` | Include graph-related memories in hot-path recall |
+| `recall.queryMaxChars` | `1200` | Maximum latest-user query characters embedded for recall |
+| `capture.timeoutMs` | `10000` | HTTP timeout for post-turn ingest and manual writes |
+| `capture.maxCharsPerTurn` | `6000` | Maximum captured characters per turn |
+| `capture.maxCharsPerMessage` | `3000` | Maximum captured characters per message |
+| `capture.maxChunksPerTurn` | `4` | Maximum chunks sent to Persistio per turn |
+| `capture.maxChunkChars` | `2000` | Maximum characters per capture chunk |
+| `capture.roles.user` | `enabled` | Capture user messages |
+| `capture.roles.assistant` | `bounded` | Capture assistant messages after deterministic noise filtering |
+| `capture.roles.tool` | `disabled` | Capture tool messages |
 
-Recall is fail-open by design. If Persistio does not answer within `recallTimeout`, the plugin returns no memory for that turn instead of blocking the OpenClaw lane. After three consecutive recall/search failures it opens a 60 second circuit breaker and skips recall immediately during the cooldown. The plugin also registers a bounded `before_prompt_build` hook timeout; operators can still override this in OpenClaw with `plugins.entries.<id>.hooks.timeouts.before_prompt_build`.
+## Upgrade from 0.1.x
 
-Prompt recall intentionally defaults to a small direct semantic bundle. `includeRelatedMemories` and `recallIncludePending` are opt-in because graph expansion and fresh candidates increase context size and tail latency on interactive channels.
+Install the `0.2.x` package, configure `openclaw-persistio-v2`, and point the OpenClaw memory slot at the new plugin id:
 
-`agent_end` receives a snapshot of the active OpenClaw transcript, so the plugin deduplicates per session and only sends each user, agent, or enabled tool message once per plugin process. Deduplication keys are bounded in memory and expire after 24 hours of session inactivity.
+```json
+{
+  "plugins": {
+    "slots": {
+      "memory": "openclaw-persistio-v2"
+    }
+  }
+}
+```
 
-Assistant ingest is bounded before any network call. By default the plugin skips non-main `agent:*` sessions, collapses oversized code/log/diff/blob/table-shaped assistant content into omission markers, caps assistant ingest per message and per turn, then chunks all ingest content below `ingest.maxChunkChars`. Persistio still performs server-side extraction and curation; the plugin only enforces a deterministic transport-safe shape.
+Keep the old `openclaw-persistio` entry disabled or remove it after confirming the new slot behaves correctly. The v2 id is intentionally distinct so operators opt into the new memory-slot behavior instead of silently changing an existing v1 install.
 
-## Tools exposed
+## Benchmark Posture
 
-| Tool | Description |
-|---|---|
-| `memory_search` | Required OpenClaw-compatible semantic memory search. Returns bounded structured results with `persistio://memory/<id>` paths |
-| `memory_get` | Required OpenClaw-compatible exact memory read for paths returned by `memory_search` |
-| `persistio_memory_add` | Optional manual fact store |
-| `persistio_memory_delete` | Optional memory deletion by ID |
-| `persistio_memory_list` | Optional vault memory listing |
+For behavioral benchmark work, leave `autoRecall=true` and `autoCapture=true`, keep recall under a tight timeout, and keep `includePending` / `includeRelated` off unless the specific benchmark requires them.
 
-## License
+The expected turn shape is:
 
-MIT
+```text
+OpenClaw turn
+  -> Persistio autoRecall, bounded and fail-open
+  -> model answers with a tiny memory block
+  -> Persistio autoCapture, async and non-blocking
+```

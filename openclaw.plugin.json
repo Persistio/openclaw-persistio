@@ -1,31 +1,18 @@
 {
-  "id": "openclaw-persistio",
-  "name": "Persistio Memory",
-  "description": "Persistent semantic memory for OpenClaw via Persistio",
-  "version": "0.1.8",
+  "id": "openclaw-persistio-v2",
+  "name": "Persistio Memory v2",
+  "description": "OpenClaw-native long-term memory powered by Persistio",
+  "version": "0.2.0",
   "kind": "memory",
   "activation": {
     "onStartup": true
   },
   "contracts": {
     "tools": [
-      "memory_search",
-      "memory_get",
-      "persistio_memory_add",
-      "persistio_memory_delete",
-      "persistio_memory_list"
+      "memory_recall",
+      "memory_store",
+      "memory_forget"
     ]
-  },
-  "toolMetadata": {
-    "persistio_memory_add": {
-      "optional": true
-    },
-    "persistio_memory_delete": {
-      "optional": true
-    },
-    "persistio_memory_list": {
-      "optional": true
-    }
   },
   "configSchema": {
     "type": "object",
@@ -37,30 +24,13 @@
       "apiKey": {
         "type": "string"
       },
-      "tokenBudget": {
-        "type": "number",
-        "minimum": 1
-      },
-      "recallTopK": {
-        "type": "number",
-        "minimum": 1
-      },
-      "recallMinSimilarity": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 1
-      },
-      "recallTimeout": {
-        "type": "number",
-        "minimum": 1
-      },
-      "recallIncludePending": {
+      "autoRecall": {
         "type": "boolean"
       },
-      "includeRelatedMemories": {
+      "autoCapture": {
         "type": "boolean"
       },
-      "ingest": {
+      "recall": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -68,94 +38,70 @@
             "type": "number",
             "minimum": 1
           },
-          "maxChunkChars": {
+          "maxResults": {
             "type": "number",
-            "minimum": 256
+            "minimum": 1
+          },
+          "tokenBudget": {
+            "type": "number",
+            "minimum": 1
+          },
+          "minSimilarity": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "includePending": {
+            "type": "boolean"
+          },
+          "includeRelated": {
+            "type": "boolean"
+          },
+          "queryMaxChars": {
+            "type": "number",
+            "minimum": 100
+          }
+        }
+      },
+      "capture": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "timeoutMs": {
+            "type": "number",
+            "minimum": 1
+          },
+          "maxCharsPerTurn": {
+            "type": "number",
+            "minimum": 1
+          },
+          "maxCharsPerMessage": {
+            "type": "number",
+            "minimum": 1
           },
           "maxChunksPerTurn": {
             "type": "number",
             "minimum": 1
           },
-          "skipSubagentSessions": {
-            "type": "boolean"
+          "maxChunkChars": {
+            "type": "number",
+            "minimum": 256
           },
-          "user": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "maxCharsPerMessage": {
-                "type": "number",
-                "minimum": 1
-              }
-            }
-          },
-          "agent": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "mode": {
-                "type": "string",
-                "enum": [
-                  "bounded",
-                  "raw"
-                ]
-              },
-              "maxCharsPerMessage": {
-                "type": "number",
-                "minimum": 1
-              },
-              "maxCharsAfterFiltering": {
-                "type": "number",
-                "minimum": 1
-              },
-              "maxCharsPerTurn": {
-                "type": "number",
-                "minimum": 1
-              },
-              "largeBlockThresholdChars": {
-                "type": "number",
-                "minimum": 1
-              },
-              "largeBlockThresholdLines": {
-                "type": "number",
-                "minimum": 1
-              },
-              "maxTableRows": {
-                "type": "number",
-                "minimum": 1
-              }
-            }
-          }
-        }
-      },
-      "send": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
           "roles": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
               "user": {
                 "type": "string",
-                "enum": [
-                  "enabled",
-                  "disabled"
-                ]
+                "enum": ["enabled", "disabled"]
               },
-              "agent": {
+              "assistant": {
                 "type": "string",
-                "enum": [
-                  "enabled",
-                  "disabled"
-                ]
+                "enum": ["enabled", "bounded", "disabled"]
               },
               "tool": {
                 "type": "string",
-                "enum": [
-                  "enabled",
-                  "disabled"
-                ]
+                "enum": ["enabled", "disabled"]
               }
             }
           }
@@ -166,5 +112,23 @@
       "baseURL",
       "apiKey"
     ]
+  },
+  "uiHints": {
+    "apiKey": {
+      "label": "Vault API Key",
+      "sensitive": true
+    },
+    "baseURL": {
+      "label": "Persistio Base URL",
+      "placeholder": "https://api.persistio.ai"
+    },
+    "autoRecall": {
+      "label": "Auto Recall",
+      "help": "Inject a small bounded Persistio memory block before each turn"
+    },
+    "autoCapture": {
+      "label": "Auto Capture",
+      "help": "Capture bounded durable conversation facts after successful turns"
+    }
   }
 }
