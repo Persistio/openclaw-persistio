@@ -2,7 +2,7 @@
 
 OpenClaw-native long-term memory powered by Persistio.
 
-This is the production Persistio plugin for OpenClaw. Version `0.2.x` promotes the OpenClaw-native memory-slot architecture that was tested separately as `openclaw-persistio-v2`.
+This is the official Persistio memory-slot plugin for OpenClaw.
 
 ## Design
 
@@ -14,7 +14,7 @@ Persistio v2 separates the memory surfaces:
 - `autoRecall` optionally injects a small bounded memory block before a turn.
 - `autoCapture` optionally captures bounded post-turn messages without awaiting Persistio from the OpenClaw hook.
 
-The plugin registers as an OpenClaw memory plugin and provides prompt guidance. It does not replace OpenClaw's generic `memory_search` / `memory_get` tools in this first v2 package.
+The plugin registers as an OpenClaw memory plugin, provides prompt guidance, and exposes Persistio-specific memory tools without shadowing any generic tools OpenClaw may provide separately.
 
 ## Install
 
@@ -35,7 +35,6 @@ To test it as the active memory slot:
     "entries": {
       "openclaw-persistio-v2": {
         "enabled": true,
-        "package": "@persistio/openclaw-plugin",
         "hooks": {
           "allowConversationAccess": true
         },
@@ -67,6 +66,8 @@ To test it as the active memory slot:
 }
 ```
 
+Do not add a `package` field to the config entry. OpenClaw records the npm package through `openclaw plugins install`; the config entry only enables and configures the manifest id.
+
 `hooks.allowConversationAccess` is required when `autoCapture` is enabled because the plugin reads the completed conversation snapshot from `agent_end`.
 
 ## Configuration
@@ -91,25 +92,7 @@ To test it as the active memory slot:
 | `capture.roles.assistant` | `bounded` | Capture assistant messages after deterministic noise filtering |
 | `capture.roles.tool` | `disabled` | Capture tool messages |
 
-## Upgrade from 0.1.x
-
-Install the `0.2.x` package, configure `openclaw-persistio-v2`, and point the OpenClaw memory slot at the new plugin id:
-
-```json
-{
-  "plugins": {
-    "slots": {
-      "memory": "openclaw-persistio-v2"
-    }
-  }
-}
-```
-
-Keep the old `openclaw-persistio` entry disabled or remove it after confirming the new slot behaves correctly. The v2 id is intentionally distinct so operators opt into the new memory-slot behavior instead of silently changing an existing v1 install.
-
-## Benchmark Posture
-
-For behavioral benchmark work, leave `autoRecall=true` and `autoCapture=true`, keep recall under a tight timeout, and keep `includePending` / `includeRelated` off unless the specific benchmark requires them.
+## Runtime Shape
 
 The expected turn shape is:
 

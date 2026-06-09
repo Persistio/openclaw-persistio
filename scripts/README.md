@@ -4,7 +4,7 @@ Seed a Persistio memory store from existing OpenClaw session JSONL files.
 
 Useful when you're setting up Persistio for the first time and want to bootstrap it with historical conversation context — rather than starting from a blank slate.
 
-The script replicates the exact extraction logic used by the `openclaw-persistio` plugin, so memories ingested this way are indistinguishable from those captured live.
+The script sends the same `/v1/ingest` payload shape that the OpenClaw plugin uses, so historical chunks enter Persistio through the normal extraction and curation pipeline.
 
 ---
 
@@ -37,7 +37,7 @@ node persistio-hydrate.mjs --url https://api.persistio.ai --key <apiKey> --dir ~
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--url` | ✅ | Persistio base URL |
-| `--key` | ✅ | Tenant API key |
+| `--key` | ✅ | Persistio vault API key |
 | `--file` | ✅ (or `--dir`) | Path to a single JSONL session file |
 | `--dir` | ✅ (or `--file`) | Directory of JSONL session files (processed oldest-first) |
 | `--limit` | | Max number of files to process from `--dir` (default: all) |
