@@ -33,6 +33,17 @@ export interface IngestChunk {
     role: string;
     content: string;
     timestamp: string;
+    provenance?: CaptureProvenance;
+}
+export interface CaptureProvenance {
+    source_class?: 'agent_cron' | 'agent_hook' | 'agent_slack' | 'agent_subagent' | 'agent_other' | 'thread_conversation' | 'direct_or_import' | 'unknown';
+    actor_type: 'human' | 'assistant' | 'agent' | 'tool' | 'system' | 'import' | 'unknown';
+    trigger_type: 'direct' | 'delegated' | 'scheduled' | 'event' | 'backfill' | 'api' | 'unknown';
+    artifact_type: 'message' | 'conversation' | 'tool_result' | 'status' | 'observation' | 'log' | 'summary' | 'document' | 'unknown';
+    authorship: 'original' | 'generated' | 'transcribed' | 'imported' | 'mixed' | 'unknown';
+    cadence: 'one_off' | 'recurring' | 'batch' | 'unknown';
+    provenance_confidence?: number;
+    provenance_basis?: Array<'session_id_prefix' | 'agent_trigger' | 'integration_marker' | 'thread_session_shape' | 'session_id_shape' | 'role_counts' | 'plugin_capture' | 'api_provenance' | 'api_provenance_aggregate' | 'fallback'>;
 }
 export declare class PersistioTimeoutError extends Error {
     constructor(operation: string, timeoutMs: number);

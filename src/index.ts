@@ -1,6 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
-import { PersistioClient, PersistioTimeoutError, type PersistioMemory, type RecallResult } from './client.js';
+import { PersistioClient, PersistioTimeoutError, type CaptureProvenance, type PersistioMemory, type RecallResult } from './client.js';
 import { prepareCapture } from './capture.js';
 import { resolveConfig } from './config.js';
 import { buildMemoryBlock, buildRecallQuery } from './memory-format.js';
@@ -9,6 +8,74 @@ interface PluginLogger {
   info?: (message: string) => void;
   warn?: (message: string) => void;
 }
+
+type PluginConfigParseResult =
+  | { success: true; data: unknown }
+  | { success: false; error: { message: string } };
+
+interface OpenClawPluginConfigSchema {
+  safeParse: (value: unknown) => PluginConfigParseResult;
+  jsonSchema: {
+    type: 'object';
+    additionalProperties: boolean;
+    properties?: Record<string, never>;
+  };
+}
+
+interface PluginToolDefinition {
+  name: string;
+  label: string;
+  description: string;
+  parameters: unknown;
+  execute: (toolCallId: string, params: unknown) => unknown;
+}
+
+interface OpenClawPluginApi {
+  pluginConfig?: unknown;
+  logger?: PluginLogger;
+  registerMemoryCapability?: (capability: {
+    promptBuilder: (input: { availableTools: Set<string> }) => string[];
+  }) => void;
+  registerTool: (tool: PluginToolDefinition, options?: { name?: string }) => void;
+  on: {
+    (
+      event: 'before_prompt_build',
+      handler: (event: { prompt?: string; messages?: unknown[] }) => Promise<{ prependContext: string } | undefined> | { prependContext: string } | undefined,
+      options?: { timeoutMs?: number },
+    ): void;
+    (
+      event: 'agent_end',
+      handler: (event: { success?: boolean; runId?: string; messages?: unknown[] }, context?: { sessionKey?: string; sessionId?: string }) => void,
+      options?: { timeoutMs?: number },
+    ): void;
+  };
+}
+
+interface OpenClawPluginDefinition {
+  id: string;
+  name: string;
+  description: string;
+  configSchema: OpenClawPluginConfigSchema;
+  register: (api: OpenClawPluginApi) => void;
+}
+
+const emptyPluginConfigSchema: OpenClawPluginConfigSchema = {
+  safeParse(value: unknown): PluginConfigParseResult {
+    if (value === undefined) return { success: true, data: undefined };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { success: false, error: { message: 'expected config object' } };
+    }
+    if (Object.keys(value).length > 0) {
+      return { success: false, error: { message: 'config must be empty' } };
+    }
+    return { success: true, data: value };
+  },
+  jsonSchema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {},
+  },
+};
 
 const CAPTURE_KEY_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CAPTURED_KEYS = 2000;
@@ -247,10 +314,176 @@ function buildPromptGuidance({ availableTools }: { availableTools: Set<string> }
   ];
 }
 
-export default definePluginEntry({
+function buildCaptureProvenance(sessionId: string, chunks: Array<{ role: string }>): CaptureProvenance {
+  const roles = countChunkRoles(chunks);
+  const hasUser = (roles.get('user') ?? 0) > 0;
+  const hasAssistant = (roles.get('assistant') ?? 0) > 0;
+  const hasTool = (roles.get('tool') ?? 0) > 0;
+  const hasHumanConversationShape = hasUser && hasAssistant;
+  const hasGeneratedRole = hasAssistant || hasTool;
+  const sourceClass = inferSourceClass(sessionId);
+  const authorship = getAuthorshipFromRoles(hasUser, hasGeneratedRole);
+  const actorType = getActorFromRoles(hasUser, hasAssistant, hasTool);
+  const artifactType = getArtifactFromRoles(hasUser, hasAssistant, hasTool);
+
+  if (sourceClass === 'agent_cron') {
+    return provenance(
+      sourceClass,
+      hasUser ? actorType : hasTool && !hasAssistant ? 'tool' : 'agent',
+      'scheduled',
+      hasUser ? artifactType : hasTool && !hasAssistant ? 'tool_result' : 'observation',
+      hasUser ? authorship : 'generated',
+      'recurring',
+      0.99,
+      ['session_id_prefix', 'agent_trigger', 'role_counts', 'plugin_capture'],
+    );
+  }
+  if (sourceClass === 'agent_hook') {
+    return provenance(
+      sourceClass,
+      hasUser ? actorType : hasTool && !hasAssistant ? 'tool' : 'agent',
+      'event',
+      hasUser ? artifactType : hasTool && !hasAssistant ? 'tool_result' : 'observation',
+      hasUser ? authorship : 'generated',
+      'recurring',
+      0.95,
+      ['session_id_prefix', 'agent_trigger', 'role_counts', 'plugin_capture'],
+    );
+  }
+  if (sourceClass === 'agent_subagent' || sourceClass === 'agent_other') {
+    return provenance(
+      sourceClass,
+      hasUser ? actorType : hasTool && !hasAssistant ? 'tool' : 'agent',
+      'delegated',
+      artifactType,
+      hasUser ? authorship : 'generated',
+      'one_off',
+      0.9,
+      ['session_id_prefix', 'agent_trigger', 'role_counts', 'plugin_capture'],
+    );
+  }
+  if (sourceClass === 'agent_slack') {
+    return provenance(
+      sourceClass,
+      hasUser ? 'human' : hasTool && !hasAssistant ? 'tool' : 'assistant',
+      'delegated',
+      hasHumanConversationShape ? 'conversation' : artifactType,
+      authorship,
+      'one_off',
+      0.9,
+      ['session_id_prefix', 'integration_marker', 'role_counts', 'plugin_capture'],
+    );
+  }
+  if (sourceClass === 'thread_conversation') {
+    return provenance(
+      sourceClass,
+      actorType,
+      'direct',
+      hasHumanConversationShape ? 'conversation' : artifactType,
+      authorship,
+      'one_off',
+      hasUser ? 0.8 : 0.7,
+      ['thread_session_shape', 'role_counts', 'plugin_capture'],
+    );
+  }
+  if (sourceClass === 'direct_or_import') {
+    return provenance(
+      sourceClass,
+      actorType,
+      'api',
+      hasHumanConversationShape ? 'conversation' : artifactType,
+      authorship,
+      'one_off',
+      0.65,
+      ['session_id_shape', 'role_counts', 'plugin_capture'],
+    );
+  }
+
+  return provenance(
+    sourceClass,
+    actorType,
+    'unknown',
+    hasHumanConversationShape ? 'conversation' : artifactType,
+    authorship,
+    'unknown',
+    hasUser || hasGeneratedRole ? 0.5 : 0.25,
+    ['role_counts', 'plugin_capture', 'fallback'],
+  );
+}
+
+function getAuthorshipFromRoles(hasUser: boolean, hasGeneratedRole: boolean): CaptureProvenance['authorship'] {
+  if (hasUser && hasGeneratedRole) return 'mixed';
+  if (hasUser) return 'original';
+  if (hasGeneratedRole) return 'generated';
+  return 'unknown';
+}
+
+function getActorFromRoles(hasUser: boolean, hasAssistant: boolean, hasTool: boolean): CaptureProvenance['actor_type'] {
+  if (hasUser) return 'human';
+  if (hasTool && !hasAssistant) return 'tool';
+  if (hasAssistant) return 'assistant';
+  if (hasTool) return 'tool';
+  return 'unknown';
+}
+
+function getArtifactFromRoles(hasUser: boolean, hasAssistant: boolean, hasTool: boolean): CaptureProvenance['artifact_type'] {
+  if (hasUser && (hasAssistant || hasTool)) return 'conversation';
+  if (hasTool && !hasAssistant && !hasUser) return 'tool_result';
+  if (hasUser || hasAssistant) return 'message';
+  if (hasTool) return 'tool_result';
+  return 'unknown';
+}
+
+function inferSourceClass(sessionId: string): NonNullable<CaptureProvenance['source_class']> {
+  if (sessionId.startsWith('agent:')) {
+    const trigger = sessionId.split(':')[2] ?? '';
+    if (trigger === 'cron') return 'agent_cron';
+    if (trigger === 'hook') return 'agent_hook';
+    if (trigger === 'slack') return 'agent_slack';
+    if (trigger === 'subagent') return 'agent_subagent';
+    return 'agent_other';
+  }
+  if (sessionId.includes('-topic-')) return 'thread_conversation';
+  if (/^[0-9a-f-]{36}$/i.test(sessionId)) return 'direct_or_import';
+  return 'unknown';
+}
+
+function countChunkRoles(chunks: Array<{ role: string }>): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const chunk of chunks) {
+    const role = String(chunk.role || 'unknown').toLowerCase();
+    counts.set(role, (counts.get(role) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function provenance(
+  sourceClass: NonNullable<CaptureProvenance['source_class']>,
+  actorType: CaptureProvenance['actor_type'],
+  triggerType: CaptureProvenance['trigger_type'],
+  artifactType: CaptureProvenance['artifact_type'],
+  authorship: CaptureProvenance['authorship'],
+  cadence: CaptureProvenance['cadence'],
+  confidence: number,
+  basis: NonNullable<CaptureProvenance['provenance_basis']>,
+): CaptureProvenance {
+  return {
+    source_class: sourceClass,
+    actor_type: actorType,
+    trigger_type: triggerType,
+    artifact_type: artifactType,
+    authorship,
+    cadence,
+    provenance_confidence: confidence,
+    provenance_basis: basis,
+  };
+}
+
+const plugin: OpenClawPluginDefinition = {
   id: 'openclaw-persistio-v2',
   name: 'Persistio Memory v2',
   description: 'OpenClaw-native long-term memory powered by Persistio',
+  configSchema: emptyPluginConfigSchema,
 
   register(api) {
     const cfg = resolveConfig(api.pluginConfig);
@@ -402,9 +635,11 @@ export default definePluginEntry({
         shouldIncludeKey: (key) => !store.has(key, now),
       });
       if (prepared.chunks.length === 0) return;
+      const provenance = buildCaptureProvenance(sessionId, prepared.chunks);
+      const chunks = prepared.chunks.map((chunk) => ({ ...chunk, provenance }));
       store.markPending(prepared.keys, now);
 
-      void client.ingest(sessionId, prepared.chunks)
+      void client.ingest(sessionId, chunks)
         .then(() => {
           store.markCaptured(prepared.keys);
         })
@@ -421,4 +656,6 @@ export default definePluginEntry({
 
     api.logger?.info?.('openclaw-persistio-v2: registered');
   },
-});
+};
+
+export default plugin;
