@@ -102,3 +102,17 @@ OpenClaw turn
   -> model answers with a tiny memory block
   -> Persistio autoCapture, async and non-blocking
 ```
+
+## Public X Source Capture
+
+For workflows that use structured public X data, install
+[TweetClaw](https://github.com/Xquik-dev/tweetclaw) beside Persistio:
+
+```bash
+openclaw plugins install npm:@xquik/tweetclaw
+```
+
+Store only durable conclusions with `memory_store`, such as the query, capture
+date, source URLs, a short summary, and the resulting decision. Do not persist
+raw timelines, direct messages, private account data, credentials, or exported
+files as long-term memory.
