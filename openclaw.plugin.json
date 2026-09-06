@@ -2,7 +2,7 @@
   "id": "openclaw-persistio-v2",
   "name": "Persistio Memory v2",
   "description": "OpenClaw-native long-term memory powered by Persistio",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "kind": "memory",
   "activation": {
     "onStartup": true

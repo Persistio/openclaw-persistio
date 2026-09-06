@@ -1,6 +1,6 @@
 {
   "name": "@persistio/openclaw-plugin",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "OpenClaw-native Persistio long-term memory plugin",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,8 @@
     "dist",
     "src",
     "openclaw.plugin.json",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "license": "MIT",
   "author": "Chris Coveyduck",

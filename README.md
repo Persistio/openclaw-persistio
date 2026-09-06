@@ -19,12 +19,11 @@ The plugin registers as an OpenClaw memory plugin, provides prompt guidance, and
 ## Install
 
 ```bash
-openclaw plugins install npm:@persistio/openclaw-plugin@0.2.0
-openclaw plugins enable openclaw-persistio-v2
-openclaw gateway restart
+openclaw plugins install npm:@persistio/openclaw-plugin@0.2.2 --pin
 ```
 
-To test it as the active memory slot:
+Before enabling or restarting the gateway, configure the required `baseURL` and
+`apiKey` values and select the plugin as the active memory slot:
 
 ```json
 {
@@ -66,6 +65,16 @@ To test it as the active memory slot:
 }
 ```
 
+Then enable the plugin, restart the gateway, and verify its runtime
+registrations:
+
+```bash
+openclaw plugins enable openclaw-persistio-v2
+openclaw gateway restart
+openclaw plugins inspect openclaw-persistio-v2 --runtime
+openclaw plugins doctor
+```
+
 Do not add a `package` field to the config entry. OpenClaw records the npm package through `openclaw plugins install`; the config entry only enables and configures the manifest id.
 
 `hooks.allowConversationAccess` is required when `autoCapture` is enabled because the plugin reads the completed conversation snapshot from `agent_end`.
@@ -77,7 +86,7 @@ Do not add a `package` field to the config entry. OpenClaw records the npm packa
 | `autoRecall` | `true` | Inject a small fail-open memory block before the model turn |
 | `autoCapture` | `true` | Capture bounded post-turn messages asynchronously |
 | `recall.timeoutMs` | `1200` | HTTP timeout for recall and recall-bundle calls |
-| `recall.maxResults` | `4` | Maximum memories returned by recall |
+| `recall.maxResults` | `4` | Default recall result count; `memory_recall` can override it up to `8` with `limit` |
 | `recall.tokenBudget` | `400` | Approximate prompt-token budget for auto-recall |
 | `recall.minSimilarity` | unset | Optional Persistio similarity floor |
 | `recall.includePending` | `false` | Include pending candidate memories in hot-path recall |
@@ -99,6 +108,6 @@ The expected turn shape is:
 ```text
 OpenClaw turn
   -> Persistio autoRecall, bounded and fail-open
-  -> model answers with a tiny memory block
+  -> model receives a tiny prepended memory context block
   -> Persistio autoCapture, async and non-blocking
 ```
